@@ -75,6 +75,7 @@ Pianoroll::Pianoroll (std::string const & name, bool with_transport)
 	, layered_automation (true)
 	, fl_mode_button (nullptr)
 	, _fl_mode (false)
+	, _pre_fl_mode (Editing::MouseContent)
 	, bg (nullptr)
 	, view (nullptr)
 	, bbt_metric (*this)
@@ -394,11 +395,13 @@ Pianoroll::toggle_fl_mode ()
 	_fl_mode = !_fl_mode;
 	fl_mode_button->set_active_state (_fl_mode ? Gtkmm2ext::ExplicitActive : Gtkmm2ext::Off);
 
-	/* Turning FL on → draw tool.  Turning FL off → back to edit tool. */
 	if (_fl_mode) {
+		/* Save whatever mode was active before FL, then switch to draw */
+		_pre_fl_mode = current_mouse_mode ();
 		set_mouse_mode (Editing::MouseDraw, true);
 	} else {
-		set_mouse_mode (Editing::MouseContent, true);
+		/* Restore the mode that was active before FL was turned on */
+		set_mouse_mode (_pre_fl_mode, true);
 	}
 }
 
@@ -1210,6 +1213,34 @@ Pianoroll::key_release_handler (ArdourCanvas::Item*, GdkEvent*, ItemType)
 }
 
 void
+Pianoroll::mouse_mode_chosen (Editing::MouseMode m)
+{
+	EC_LOCAL_TEMPO_SCOPE;
+
+	if (!mouse_mode_actions[m]->get_active()) {
+		/* Notification that old mode was left — track it as pre-FL
+		   candidate only when FL is not active */
+		if (!_fl_mode) {
+			_pre_fl_mode = m;
+		}
+		return;
+	}
+
+	/* The new mode is now active.  If FL is on and the user switched to
+	   anything other than draw (e.g. pressed 'e' via global keybinding),
+	   turn FL off now so the UI stays consistent. */
+	if (_fl_mode && m != Editing::MouseDraw) {
+		_fl_mode = false;
+		if (fl_mode_button) {
+			fl_mode_button->set_active_state (Gtkmm2ext::Off);
+		}
+	}
+
+	/* Let CueEditor do its re_enter / cursor work */
+	CueEditor::mouse_mode_chosen (m);
+}
+
+void
 Pianoroll::set_mouse_mode (Editing::MouseMode m, bool force)
 {
 	EC_LOCAL_TEMPO_SCOPE;
@@ -1218,8 +1249,14 @@ Pianoroll::set_mouse_mode (Editing::MouseMode m, bool force)
 		return;
 	}
 
-	/* If the user manually switches to edit/content mode, turn off FL mode */
-	if (_fl_mode && m == Editing::MouseContent && !force) {
+	/* Track the last mode used when FL is off, so we can restore it */
+	if (!_fl_mode) {
+		_pre_fl_mode = m;
+	}
+
+	/* If the user directly requests a non-draw mode while FL is active
+	   (e.g. via the canvas 'e' key handler), turn FL off */
+	if (_fl_mode && m != Editing::MouseDraw && !force) {
 		_fl_mode = false;
 		if (fl_mode_button) {
 			fl_mode_button->set_active_state (Gtkmm2ext::Off);
