@@ -183,6 +183,14 @@ class Pianoroll : public CueEditor
 	bool layered_automation;
 	void layered_automation_button_clicked();
 
+	/* FL-mode: draw + right-click-delete + Ctrl-drag-select */
+	ArdourWidgets::ArdourButton* fl_mode_button;
+	bool _fl_mode;
+	void toggle_fl_mode ();
+  public:
+	bool fl_mode () const { return _fl_mode; }
+  private:
+
 	ControllerControls* velocity_button;
 	ControllerControls* bender_button;
 	ControllerControls* pressure_button;

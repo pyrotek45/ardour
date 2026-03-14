@@ -73,6 +73,8 @@ Pianoroll::Pianoroll (std::string const & name, bool with_transport)
 	: CueEditor (name, with_transport)
 	, prh (nullptr)
 	, layered_automation (true)
+	, fl_mode_button (nullptr)
+	, _fl_mode (false)
 	, bg (nullptr)
 	, view (nullptr)
 	, bbt_metric (*this)
@@ -372,6 +374,30 @@ Pianoroll::pack_outer (Gtk::Box& box)
 	box.pack_start (visible_channel_label, false, false);
 	box.pack_start (visible_channel_selector, false, false);
 	box.pack_start (note_mode_button, false, false);
+
+	/* FL mode toggle button */
+	fl_mode_button = manage (new ArdourButton (ArdourButton::Element (ArdourButton::Text | ArdourButton::Edge | ArdourButton::Body)));
+	fl_mode_button->set_text (_("FL"));
+	fl_mode_button->set_name ("transport button");
+	fl_mode_button->set_active_state (Gtkmm2ext::Off);
+	set_tooltip (*fl_mode_button, _("FL Mode: draw notes with left-click/drag, right-click to delete, Ctrl+drag to select"));
+	fl_mode_button->signal_clicked.connect (sigc::mem_fun (*this, &Pianoroll::toggle_fl_mode));
+	fl_mode_button->show ();
+	box.pack_start (*fl_mode_button, false, false, 4);
+}
+
+void
+Pianoroll::toggle_fl_mode ()
+{
+	EC_LOCAL_TEMPO_SCOPE;
+
+	_fl_mode = !_fl_mode;
+	fl_mode_button->set_active_state (_fl_mode ? Gtkmm2ext::ExplicitActive : Gtkmm2ext::Off);
+
+	/* FL mode always uses the draw tool */
+	if (_fl_mode) {
+		set_mouse_mode (Editing::MouseDraw, true);
+	}
 }
 
 void
@@ -865,6 +891,17 @@ Pianoroll::button_press_handler (ArdourCanvas::Item* item, GdkEvent* event, Item
 		break;
 
 	case 3:
+		/* In FL mode right-click deletes notes; swallow the event so
+		   no context menu appears. */
+		if (_fl_mode) {
+			if (item_type == NoteItem) {
+				NoteBase* nb = reinterpret_cast<NoteBase*> (item->get_data ("notebase"));
+				if (nb && view) {
+					view->delete_note (nb->note());
+				}
+			}
+			return true;   /* consumed – no context menu */
+		}
 		break;
 
 	default:
@@ -880,6 +917,17 @@ bool
 Pianoroll::button_press_handler_1 (ArdourCanvas::Item* item, GdkEvent* event, ItemType item_type)
 {
 	EC_LOCAL_TEMPO_SCOPE;
+
+	/* FL mode + Ctrl: rubber-band select regardless of item type */
+	if (_fl_mode && Keyboard::modifier_state_contains (event->button.state, Keyboard::PrimaryModifier)) {
+		if (!Keyboard::modifier_state_equals (event->button.state, Keyboard::TertiaryModifier)) {
+			view->clear_selection ();
+		}
+		MidiRubberbandSelectDrag* sel_drag = new MidiRubberbandSelectDrag (*this, view);
+		sel_drag->set_bounding_item (get_trackview_group ());
+		_drags->set (sel_drag, event);
+		return true;
+	}
 
 	NoteBase* note = nullptr;
 	Editing::MouseMode mouse_mode = current_mouse_mode();
@@ -1159,6 +1207,14 @@ Pianoroll::set_mouse_mode (Editing::MouseMode m, bool force)
 
 	if (m != Editing::MouseDraw && m != Editing::MouseContent) {
 		return;
+	}
+
+	/* If the user manually switches to edit/content mode, turn off FL mode */
+	if (_fl_mode && m == Editing::MouseContent && !force) {
+		_fl_mode = false;
+		if (fl_mode_button) {
+			fl_mode_button->set_active_state (Gtkmm2ext::Off);
+		}
 	}
 
 	EditingContext::set_mouse_mode (m, force);
@@ -1947,12 +2003,9 @@ Pianoroll::map_transport_state ()
 		if (_session->get_play_loop ()) {
 
 			loop_button.set_active (true);
+			/* loop-is-mode: show play active too since we are rolling */
+			play_button.set_active (true);
 
-			if (Config->get_loop_is_mode()) {
-				play_button.set_active (true);
-			} else {
-				play_button.set_active (false);
-			}
 		} else {
 			play_button.set_active (true);
 			loop_button.set_active (false);
@@ -1960,11 +2013,8 @@ Pianoroll::map_transport_state ()
 	} else {
 		play_button.set_active (false);
 
-		if (Config->get_loop_is_mode()) {
-			loop_button.set_active (true);
-		} else {
-			loop_button.set_active (false);
-		}
+		/* loop button reflects the armed loop-mode state even when stopped */
+		loop_button.set_active (_session->get_play_loop ());
 
 		hide_count_in ();
 	}
