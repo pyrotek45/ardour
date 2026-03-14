@@ -122,12 +122,22 @@ gui_jack_error ()
 #ifndef NDEBUG
 static void ardour_g_log (const gchar *log_domain, GLogLevelFlags log_level, const gchar *message, gpointer user_data) {
 
+	/* Do NOT call g_log_default_handler() for fatal messages: on debug
+	 * builds the default handler raises SIGABRT/SIGTRAP for G_LOG_FLAG_FATAL,
+	 * which would crash Ardour on transient X11 errors (e.g. a tooltip query
+	 * racing against window destruction during the plugin-scan dialog).
+	 * Route everything through Ardour's own logging instead. */
+
+	if (log_level & G_LOG_FLAG_FATAL) {
+		error << "g_log fatal: " << (log_domain ? log_domain : "GLib") << ": " << message << endmsg;
+		return;
+	}
+
+	/* For non-fatal messages let GLib format and print them as usual, then
+	 * also route them through Ardour's system. */
 	g_log_default_handler (log_domain, log_level, message, NULL);
 
-	switch (log_level) {
-		case G_LOG_FLAG_FATAL:
-			fatal << "g_log: " << message << endmsg;
-			break;
+	switch (log_level & G_LOG_LEVEL_MASK) {
 		case G_LOG_LEVEL_CRITICAL:
 		case G_LOG_LEVEL_ERROR:
 			error << "g_log: " << message << endmsg;
