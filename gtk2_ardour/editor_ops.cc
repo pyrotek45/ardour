@@ -5361,9 +5361,14 @@ Editor::duplicate_some_regions (RegionSelection& regions, float times)
 		for (auto& kv : auto_inserts) {
 			std::shared_ptr<AutomationList> al = kv.first;
 			XMLNode& before = al->get_state ();
+			/* Use fast_simple_add() instead of add() to avoid the guard-point
+			 * machinery in add() that runs even outside a write-pass and inserts
+			 * extra interpolated anchor events, mangling the automation curve.
+			 * freeze() + thaw() ensures the list is sorted and deduplicated after
+			 * all new points have been appended. */
 			al->freeze ();
 			for (auto const& p : kv.second) {
-				al->add (p.first, p.second);
+				al->fast_simple_add (p.first, p.second);
 			}
 			al->thaw ();
 			_session->add_command (new MementoCommand<AutomationList> (*al.get (), &before, &al->get_state ()));
