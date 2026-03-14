@@ -5319,33 +5319,38 @@ Editor::duplicate_some_regions (RegionSelection& regions, float times)
 		timepos_t const r_start   = r->position ();
 		timepos_t const r_end     = r_start + r->length ();
 
-		/* Walk all visible automation child lanes of this track */
-		TimeAxisView::Children children = rtv->get_child_list ();
-		for (auto const& child : children) {
+		/* Walk all automation child lanes of this track (visible or not).
+		 * We intentionally use the full children list here so that
+		 * automation data is duplicated even when a lane is collapsed. */
+		for (auto const& child : rtv->get_all_children ()) {
 			AutomationTimeAxisView* atv = dynamic_cast<AutomationTimeAxisView*> (child.get ());
 			if (!atv) {
 				continue;
 			}
 
-			/* Get all AutomationLines in this lane */
-			std::list<std::shared_ptr<AutomationLine>> lines = atv->lines ();
-			for (auto const& al_line : lines) {
-				std::shared_ptr<AutomationList> al = al_line->the_list ();
-				if (!al) {
-					continue;
-				}
+			/* Access the AutomationList directly through the control —
+			 * this is reliable regardless of whether a UI AutomationLine
+			 * object has been created (atv->lines() may return empty if
+			 * the lane was never rendered). */
+			std::shared_ptr<ARDOUR::AutomationControl> ctrl = atv->control ();
+			if (!ctrl) {
+				continue;
+			}
+			std::shared_ptr<AutomationList> al = std::dynamic_pointer_cast<AutomationList> (ctrl->list ());
+			if (!al || al->empty ()) {
+				continue;
+			}
 
-				/* Collect every point that falls within the region's time range */
-				for (AutomationList::const_iterator evt = al->begin (); evt != al->end (); ++evt) {
-					timepos_t const t ((*evt)->when);
-					if (t >= r_start && t < r_end) {
-						double const val = (*evt)->value;
-						/* Insert one copy per requested duplication, each shifted by span*i
-						 * (same stride as the region duplication above) */
-						for (int i = 1; i <= (int) times; ++i) {
-							timepos_t new_time = t + span.scale (i);
-							auto_inserts[al].push_back (std::make_pair (new_time, val));
-						}
+			/* Collect every point that falls within the region's time range */
+			for (AutomationList::const_iterator evt = al->begin (); evt != al->end (); ++evt) {
+				timepos_t const t ((*evt)->when);
+				if (t >= r_start && t < r_end) {
+					double const val = (*evt)->value;
+					/* Insert one copy per requested duplication, each shifted by span*i
+					 * (same stride as the region duplication above) */
+					for (int i = 1; i <= (int) times; ++i) {
+						timepos_t new_time = t + span.scale (i);
+						auto_inserts[al].push_back (std::make_pair (new_time, val));
 					}
 				}
 			}
