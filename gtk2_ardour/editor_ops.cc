@@ -5131,6 +5131,66 @@ Editor::paste_internal (timepos_t const & pos, float times)
 }
 
 void
+Editor::duplicate_points (float times)
+{
+	if (selection->points.empty ()) {
+		return;
+	}
+
+	/* Sort points by time so we can find the span */
+	selection->points.sort (PointsSelectionPositionSorter ());
+
+	/* Determine the time span of the selected points: earliest to latest */
+	timepos_t earliest = timepos_t::max (Temporal::AudioTime);
+	timepos_t latest   = timepos_t (Temporal::AudioTime);
+
+	for (auto const& pt : selection->points) {
+		AutomationList::const_iterator ctrl_evt = pt->model ();
+		timepos_t const t ((*ctrl_evt)->when);
+		if (t < earliest) { earliest = t; }
+		if (t > latest)   { latest   = t; }
+	}
+
+	if (earliest == timepos_t::max (Temporal::AudioTime)) {
+		return;
+	}
+
+	/* span = distance from earliest to one-past-latest (same convention as region duplication) */
+	timecnt_t const span = earliest.distance (latest) + timecnt_t (timepos_t (Temporal::AudioTime).increment().distance (timepos_t (Temporal::AudioTime).increment()));
+
+	/* Build a map of AutomationList → list of (when, value) pairs to insert */
+	typedef std::map<std::shared_ptr<AutomationList>, std::vector<std::pair<timepos_t, double>>> InsertMap;
+	InsertMap inserts;
+
+	for (auto const& pt : selection->points) {
+		std::shared_ptr<AutomationList> al = pt->line().the_list();
+		AutomationList::const_iterator ctrl_evt = pt->model ();
+		timepos_t const original_time ((*ctrl_evt)->when);
+		double    const val = (*ctrl_evt)->value;
+
+		for (int i = 1; i <= (int)times; ++i) {
+			timepos_t new_time = original_time + span.scale (i);
+			inserts[al].push_back (std::make_pair (new_time, val));
+		}
+	}
+
+	begin_reversible_command (_("duplicate automation points"));
+
+	for (auto& kv : inserts) {
+		std::shared_ptr<AutomationList> al = kv.first;
+		XMLNode& before = al->get_state ();
+		al->freeze ();
+		for (auto const& p : kv.second) {
+			al->add (p.first, p.second);
+		}
+		al->thaw ();
+		_session->add_command (new MementoCommand<AutomationList> (*al.get(), &before, &al->get_state ()));
+	}
+
+	commit_reversible_command ();
+}
+
+void
 Editor::duplicate_regions (float times)
 {
 	RegionSelection rs (get_regions_from_selection_and_entered());

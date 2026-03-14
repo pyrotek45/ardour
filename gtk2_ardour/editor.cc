@@ -3062,7 +3062,7 @@ Editor::duplicate_range (bool with_dialog)
 
 	RegionSelection rs = get_regions_from_selection_and_entered ();
 
-	if (selection->time.length() == 0 && rs.empty()) {
+	if (selection->time.length() == 0 && rs.empty() && selection->points.empty()) {
 		return;
 	}
 
@@ -3114,10 +3114,16 @@ Editor::duplicate_range (bool with_dialog)
 	} else if (get_smart_mode()) {
 		if (!selection->time.length().is_zero()) {
 			duplicate_selection (times);
-		} else
+		} else {
 			duplicate_some_regions (rs, times);
+		}
 	} else {
 		duplicate_some_regions (rs, times);
+	}
+
+	/* Always duplicate any selected automation points, regardless of mode */
+	if (!selection->points.empty()) {
+		duplicate_points (times);
 	}
 }
 
