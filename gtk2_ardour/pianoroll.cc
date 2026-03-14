@@ -394,9 +394,11 @@ Pianoroll::toggle_fl_mode ()
 	_fl_mode = !_fl_mode;
 	fl_mode_button->set_active_state (_fl_mode ? Gtkmm2ext::ExplicitActive : Gtkmm2ext::Off);
 
-	/* FL mode always uses the draw tool */
+	/* Turning FL on → draw tool.  Turning FL off → back to edit tool. */
 	if (_fl_mode) {
 		set_mouse_mode (Editing::MouseDraw, true);
+	} else {
+		set_mouse_mode (Editing::MouseContent, true);
 	}
 }
 
