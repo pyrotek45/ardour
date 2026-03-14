@@ -28,6 +28,10 @@ depcomp
 
 # misc editor/tools
 *~
+
+# NixOS local build files (not for upstream)
+shell.nix
+default.nix
 *.swp
 *.kdev4
 .gdb_history
