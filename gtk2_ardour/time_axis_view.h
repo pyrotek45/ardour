@@ -229,6 +229,7 @@ public:
 
 	typedef std::vector<std::shared_ptr<TimeAxisView> > Children;
 	Children get_child_list () const;
+	Children get_all_children () const;
 
 	static uint32_t preset_height (Height);
 

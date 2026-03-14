@@ -1399,6 +1399,13 @@ TimeAxisView::get_child_list () const
 	return c;
 }
 
+/** @return All child time axis views, including hidden ones */
+TimeAxisView::Children
+TimeAxisView::get_all_children () const
+{
+	return children;
+}
+
 void
 TimeAxisView::build_size_menu ()
 {
