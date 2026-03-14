@@ -918,8 +918,9 @@ Pianoroll::button_press_handler_1 (ArdourCanvas::Item* item, GdkEvent* event, It
 {
 	EC_LOCAL_TEMPO_SCOPE;
 
-	/* FL mode + Ctrl: rubber-band select regardless of item type */
-	if (_fl_mode && Keyboard::modifier_state_contains (event->button.state, Keyboard::PrimaryModifier)) {
+	/* FL mode + Ctrl on a non-note item: rubber-band select.
+	   On a NoteItem, fall through so NoteDrag picks up the copy (Ctrl = CopyModifier). */
+	if (_fl_mode && Keyboard::modifier_state_contains (event->button.state, Keyboard::PrimaryModifier) && item_type != NoteItem) {
 		if (!Keyboard::modifier_state_equals (event->button.state, Keyboard::TertiaryModifier)) {
 			view->clear_selection ();
 		}

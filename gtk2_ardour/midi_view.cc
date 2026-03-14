@@ -577,6 +577,10 @@ bool
 MidiView::button_press (GdkEventButton* ev)
 {
 	if (Keyboard::is_context_menu_event (ev)) {
+		/* In FL mode, suppress all right-click context menus */
+		if (_editing_context.fl_mode()) {
+			return true;
+		}
 		return show_context_menu (ev);
 	}
 
