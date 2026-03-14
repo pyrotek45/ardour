@@ -589,6 +589,18 @@ MidiView::button_press (GdkEventButton* ev)
 
 	if (m == MouseDraw || (m == MouseContent && Keyboard::modifier_state_contains (ev->state, Keyboard::insert_note_modifier()))) {
 
+		/* FL mode + Ctrl: rubberband select instead of draw/create */
+		if (_editing_context.fl_mode() && Keyboard::modifier_state_contains (ev->state, Keyboard::PrimaryModifier)) {
+			selection_drag = new MidiRubberbandSelectDrag (_editing_context, this);
+			selection_drag->set_bounding_item (_editing_context.get_trackview_group());
+			_editing_context.drags()->set (selection_drag, (GdkEvent *) ev);
+			if (!Keyboard::modifier_state_equals (ev->state, Keyboard::TertiaryModifier)) {
+				clear_selection_internal ();
+				_mouse_changed_selection = true;
+			}
+			return true;
+		}
+
 		_editing_context.set_canvas_cursor (_editing_context.cursors()->midi_pencil);
 
 		int stride_multiple;
@@ -2998,23 +3010,17 @@ MidiView::move_copies (timecnt_t const & dx_qn, double dy, double cumulative_dy)
 			to_play.push_back (n->note());
 		}
 
+		timepos_t const note_time_qn = _midi_region->source_beats_to_absolute_time (n->note()->time());
 		double_t dx = 0;
 
-		Temporal::Beats note_time_qn;
-		if (!_on_timeline) {
-			note_time_qn = n->note()->time ();
-		} else {
-			note_time_qn = _midi_region->source_beats_to_absolute_beats (n->note()->time());
-		}
-
 		if (_midi_context.note_mode() == Sustained) {
-			dx = _editing_context.time_to_pixel_unrounded (timepos_t (note_time_qn + dx_qn.beats()));
-			dx -= _editing_context.canvas_to_timeline (n->item()->item_to_canvas (ArdourCanvas::Duple (n->x0(), 0)).x);
+			dx = _editing_context.time_to_pixel_unrounded (timepos_t (note_time_qn) + dx_qn)
+				- n->item()->item_to_canvas (ArdourCanvas::Duple (n->x0(), 0)).x;
 		} else {
 			Hit* hit = dynamic_cast<Hit*>(n);
 			if (hit) {
-				dx = _editing_context.time_to_pixel_unrounded (timepos_t (note_time_qn + dx_qn.beats()));
-				dx -= _editing_context.canvas_to_timeline (n->item()->item_to_canvas (ArdourCanvas::Duple (((hit->x0() + hit->x1()) / 2.0) - hit->position().x, 0)).x);
+				dx = _editing_context.time_to_pixel_unrounded (timepos_t (note_time_qn) + dx_qn)
+					- n->item()->item_to_canvas (ArdourCanvas::Duple (((hit->x0() + hit->x1()) / 2.0) - hit->position().x, 0)).x;
 			}
 		}
 
@@ -3022,8 +3028,7 @@ MidiView::move_copies (timecnt_t const & dx_qn, double dy, double cumulative_dy)
 
 		if (_midi_context.note_mode() == Sustained) {
 			Note* sus = dynamic_cast<Note*> (*i);
-			double len_dx = _editing_context.time_to_pixel_unrounded (timepos_t (note_time_qn) + dx_qn + timecnt_t (n->note()->length()));
-			len_dx = _editing_context.timeline_to_canvas (len_dx);
+			double const len_dx = _editing_context.time_to_pixel_unrounded (timepos_t (note_time_qn) + dx_qn + timecnt_t (n->note()->length()));
 
 			sus->set_x1 (n->item()->canvas_to_item (ArdourCanvas::Duple (len_dx, 0)).x);
 		}
@@ -3247,17 +3252,6 @@ MidiView::start() const
 double
 MidiView::snap_to_pixel(double x, bool ensure_snap)
 {
-	if (!_on_timeline) {
-		/* Pianoroll: pixel 0 == beat 0 in the local tempo map.
-		 * Snap the local-space sample position directly; do not add
-		 * the region's session-absolute offset (snap_pixel_to_time
-		 * does that via snap_relative_time_to_relative_time), which
-		 * would mis-align the snap grid by the clip's fractional beat
-		 * position whenever the clip is not on a beat boundary. */
-		timepos_t pos (_editing_context.pixel_to_sample (x));
-		_editing_context.snap_to (pos, Temporal::RoundNearest, SnapToAny_Visual, ensure_snap);
-		return (double) _editing_context.sample_to_pixel (pos.samples());
-	}
 	return (double) _editing_context.sample_to_pixel (snap_pixel_to_time(x, ensure_snap).samples());
 }
 
@@ -3404,25 +3398,10 @@ MidiView::update_resizing (NoteBase* primary, bool at_front, double delta_x, boo
 
 			timepos_t snapped_x;
 
-			if (!_on_timeline) {
-				/* In the pianoroll, pixel 0 == sample 0 == beat 0 in
-				 * the clip-local tempo map.  We must snap the raw
-				 * pixel position directly in that local space without
-				 * adding the region's session-absolute offset, because
-				 * adding it would shift the snap grid by the fractional
-				 * beat offset of the clip's start position, causing
-				 * snapping to land on wrong beats whenever the clip is
-				 * not placed on a beat boundary. */
-				snapped_x = timepos_t (_editing_context.pixel_to_sample (current_x));
-				if (with_snap) {
-					_editing_context.snap_to (snapped_x, Temporal::RoundNearest, SnapToAny_Visual, ensure_snap);
-				}
+			if (with_snap) {
+				snapped_x = snap_pixel_to_time (current_x, ensure_snap); /* units depend on snap settings */
 			} else {
-				if (with_snap) {
-					snapped_x = snap_pixel_to_time (current_x, ensure_snap); /* units depend on snap settings */
-				} else {
-					snapped_x = timepos_t (_editing_context.pixel_to_sample (current_x)); /* probably samples */
-				}
+				snapped_x = timepos_t (_editing_context.pixel_to_sample (current_x)); /* probably samples */
 			}
 
 			Temporal::TempoMap::SharedPtr tmap (Temporal::TempoMap::use());
@@ -3481,17 +3460,6 @@ MidiView::finish_resizing (NoteBase* primary, bool at_front, double delta_x, boo
 		return;
 	}
 
-	/* Swap in the editing context's local tempo map for the duration of
-	 * this function.  The pianoroll uses a clip-relative tempo map
-	 * (beat 0 = sample 0) so that all tmap->quarters_at() and
-	 * sample<->beat conversions operate in pianoroll space.  Without
-	 * this scope the global session tempo map would be active and note
-	 * positions would snap to wrong absolute bar positions on the
-	 * timeline.  This mirrors the implicit scoping that update_resizing()
-	 * relies on through its callees (snap_pixel_to_time →
-	 * snap_relative_time_to_relative_time). */
-	EC_LOCAL_TEMPO_SCOPE_ARG (_editing_context);
-
 	_note_diff_command = _model->new_note_diff_command (_("resize notes"));  /* we are a subcommand, so we don't want to use start_note_diff() which begins a new command */
 
 	/* XX why doesn't snap_pixel_to_sample() handle this properly? */
@@ -3548,35 +3516,21 @@ MidiView::finish_resizing (NoteBase* primary, bool at_front, double delta_x, boo
 
 		Temporal::Beats src_beats;
 
-		timepos_t snapped_x;
-
 		if (!_on_timeline) {
-			/* In the pianoroll, pixel 0 == sample 0 == beat 0 in the
-			 * clip-local tempo map.  Snap the raw pixel position
-			 * directly in local space — do NOT add the region's
-			 * session-absolute offset via snap_pixel_to_time(), as
-			 * that would shift the snap grid by the fractional beat
-			 * offset of the clip's placement, causing wrong snapping
-			 * whenever the clip does not start on a beat boundary. */
-			snapped_x = timepos_t (_editing_context.pixel_to_sample (current_x));
-			if (with_snap) {
-				_editing_context.snap_to (snapped_x, Temporal::RoundNearest, SnapToAny_Visual, ensure_snap);
-			}
+			src_beats = timepos_t (_editing_context.pixel_to_sample (current_x)).beats();
 		} else {
+
+			/* Convert the new x position to a position within the source */
+
+			timecnt_t current_time;
+
 			if (with_snap) {
-				snapped_x = snap_pixel_to_time (current_x, ensure_snap);
+				current_time = snap_pixel_to_time (current_x, ensure_snap);
 			} else {
-				snapped_x = timepos_t (_editing_context.pixel_to_sample (current_x));
+				current_time = timecnt_t (_editing_context.pixel_to_sample (current_x));
 			}
-		}
 
-		Temporal::TempoMap::SharedPtr tmap (Temporal::TempoMap::use());
-		const timepos_t abs_beats (tmap->quarters_at (snapped_x));
-
-		if (!_on_timeline) {
-			src_beats = abs_beats.beats ();
-		} else {
-			src_beats = _midi_region->absolute_time_to_source_beats (abs_beats);
+			src_beats = _midi_region->absolute_time_to_source_beats (_midi_region->position() + current_time);
 		}
 
 		if (at_front && src_beats < canvas_note->note()->end_time()) {

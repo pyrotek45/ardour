@@ -1078,6 +1078,12 @@ Pianoroll::button_release_handler (ArdourCanvas::Item* item, GdkEvent* event, It
 
 	} else {
 
+		/* In FL mode, right-click was already handled on press (note
+		   deletion); suppress the context menu entirely. */
+		if (_fl_mode) {
+			return true;
+		}
+
 		switch (item_type) {
 		case NoteItem:
 			if (internal_editing()) {

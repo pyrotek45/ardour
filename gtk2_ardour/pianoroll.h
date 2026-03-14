@@ -188,7 +188,7 @@ class Pianoroll : public CueEditor
 	bool _fl_mode;
 	void toggle_fl_mode ();
   public:
-	bool fl_mode () const { return _fl_mode; }
+	bool fl_mode () const override { return _fl_mode; }
   private:
 
 	ControllerControls* velocity_button;
