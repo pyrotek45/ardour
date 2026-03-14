@@ -5299,6 +5299,72 @@ Editor::duplicate_some_regions (RegionSelection& regions, float times)
 		c.disconnect ();
 	}
 
+	/* Duplicate automation points that fall within each region's time range.
+	 * This way Ctrl+D on a region automatically brings its automation along,
+	 * without requiring the user to separately select automation control points.
+	 *
+	 * We build a map of AutomationList → inserts so we can freeze/thaw each
+	 * list once even when multiple regions share the same track. */
+	typedef std::map<std::shared_ptr<AutomationList>, std::vector<std::pair<timepos_t, double>>> AutoInsertMap;
+	AutoInsertMap auto_inserts;
+
+	for (auto const& rv : regions) {
+		TimeAxisView& tv  = rv->get_time_axis_view ();
+		RouteTimeAxisView* rtv = dynamic_cast<RouteTimeAxisView*> (&tv);
+		if (!rtv) {
+			continue;
+		}
+
+		std::shared_ptr<Region> r = rv->region ();
+		timepos_t const r_start   = r->position ();
+		timepos_t const r_end     = r_start + r->length ();
+
+		/* Walk all visible automation child lanes of this track */
+		TimeAxisView::Children children = rtv->get_child_list ();
+		for (auto const& child : children) {
+			AutomationTimeAxisView* atv = dynamic_cast<AutomationTimeAxisView*> (child.get ());
+			if (!atv) {
+				continue;
+			}
+
+			/* Get all AutomationLines in this lane */
+			std::list<std::shared_ptr<AutomationLine>> lines = atv->lines ();
+			for (auto const& al_line : lines) {
+				std::shared_ptr<AutomationList> al = al_line->the_list ();
+				if (!al) {
+					continue;
+				}
+
+				/* Collect every point that falls within the region's time range */
+				for (AutomationList::const_iterator evt = al->begin (); evt != al->end (); ++evt) {
+					timepos_t const t ((*evt)->when);
+					if (t >= r_start && t < r_end) {
+						double const val = (*evt)->value;
+						/* Insert one copy per requested duplication, each shifted by span*i
+						 * (same stride as the region duplication above) */
+						for (int i = 1; i <= (int) times; ++i) {
+							timepos_t new_time = t + span.scale (i);
+							auto_inserts[al].push_back (std::make_pair (new_time, val));
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if (!auto_inserts.empty ()) {
+		for (auto& kv : auto_inserts) {
+			std::shared_ptr<AutomationList> al = kv.first;
+			XMLNode& before = al->get_state ();
+			al->freeze ();
+			for (auto const& p : kv.second) {
+				al->add (p.first, p.second);
+			}
+			al->thaw ();
+			_session->add_command (new MementoCommand<AutomationList> (*al.get (), &before, &al->get_state ()));
+		}
+	}
+
 	if (!foo.empty()) {
 		selection->set (foo);
 	}
