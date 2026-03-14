@@ -1961,6 +1961,7 @@ private:
 
 	void duplicate_range (bool with_dialog);
 	void duplicate_regions (float times);
+	void duplicate_points (float times);
 
 	TimeFXDialog* current_timefx;
 	static void* timefx_thread (void* arg);
