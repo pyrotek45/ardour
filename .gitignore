@@ -32,6 +32,8 @@ depcomp
 # NixOS local build files (not for upstream)
 shell.nix
 default.nix
+nixos-build.patch
+NOTES.md
 *.swp
 *.kdev4
 .gdb_history
