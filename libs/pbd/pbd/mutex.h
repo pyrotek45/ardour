@@ -123,12 +123,18 @@ public:
 	{
 		std::unique_lock m (mutex._mutex, std::adopt_lock);
 		_cond.wait (m);
+		/* Release ownership without unlocking so the caller's lock
+		 * remains held after wait() returns, matching the contract
+		 * that the mutex is held on entry and exit. */
+		m.release ();
 	}
 
 	bool wait_for (Mutex& mutex, std::chrono::milliseconds const& rel_time)
 	{
 		std::unique_lock m (mutex._mutex, std::adopt_lock);
-		return std::cv_status::no_timeout == _cond.wait_for (m, rel_time);
+		bool ret = std::cv_status::no_timeout == _cond.wait_for (m, rel_time);
+		m.release ();
+		return ret;
 	}
 
 private:
