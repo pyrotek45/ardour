@@ -3121,9 +3121,17 @@ Editor::duplicate_range (bool with_dialog)
 		duplicate_some_regions (rs, times);
 	}
 
-	/* Always duplicate any selected automation points, regardless of mode */
+	/* Always duplicate any selected automation points, regardless of mode.
+	 * If regions are also being duplicated, pass their span so the points
+	 * shift by the same distance and land alongside the duplicated regions. */
 	if (!selection->points.empty()) {
-		duplicate_points (times);
+		Temporal::timecnt_t region_span = Temporal::timecnt_t::zero (Temporal::AudioTime);
+		if (!rs.empty()) {
+			timepos_t const start_time = rs.start_time ();
+			timepos_t const end_time   = rs.end_time ().increment ();
+			region_span = start_time.distance (end_time);
+		}
+		duplicate_points (times, region_span);
 	}
 }
 

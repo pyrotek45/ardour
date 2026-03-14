@@ -1961,7 +1961,7 @@ private:
 
 	void duplicate_range (bool with_dialog);
 	void duplicate_regions (float times);
-	void duplicate_points (float times);
+	void duplicate_points (float times, Temporal::timecnt_t const & span = Temporal::timecnt_t::zero (Temporal::AudioTime));
 
 	TimeFXDialog* current_timefx;
 	static void* timefx_thread (void* arg);

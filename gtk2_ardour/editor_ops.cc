@@ -5131,7 +5131,7 @@ Editor::paste_internal (timepos_t const & pos, float times)
 }
 
 void
-Editor::duplicate_points (float times)
+Editor::duplicate_points (float times, Temporal::timecnt_t const & region_span)
 {
 	if (selection->points.empty ()) {
 		return;
@@ -5155,8 +5155,11 @@ Editor::duplicate_points (float times)
 		return;
 	}
 
-	/* span = distance from earliest to one-past-latest (same convention as region duplication) */
-	timecnt_t const span = earliest.distance (latest) + timecnt_t (timepos_t (Temporal::AudioTime).increment().distance (timepos_t (Temporal::AudioTime).increment()));
+	/* If a region span was provided (i.e. regions are being duplicated at the same time),
+	 * use that as the stride so the automation points shift by the same amount as the regions.
+	 * Otherwise compute the span from the selected points themselves. */
+	timecnt_t const span = (!region_span.is_zero()) ? region_span
+	                                                 : earliest.distance (latest.increment());
 
 	/* Build a map of AutomationList → list of (when, value) pairs to insert */
 	typedef std::map<std::shared_ptr<AutomationList>, std::vector<std::pair<timepos_t, double>>> InsertMap;
