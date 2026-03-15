@@ -16,6 +16,9 @@
  * Stop port: a momentary trigger that silences all active voices immediately
  *   (fast release, ~5ms).
  *
+ * Prev/Next Sample: trigger ports that browse the directory of the currently
+ *   loaded file and load the adjacent audio file (alphabetically).
+ *
  * File loading uses the LV2 Worker extension so the RT thread is never blocked.
  * File path is communicated via patch:Set / patch:Get on the atom ports.
  * Path is saved / restored via LV2 State.
@@ -26,6 +29,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
+#include <sys/stat.h>
 
 #include <sndfile.h>
 
@@ -78,18 +83,20 @@
 /* Port indices  (must match a-sampler.ttl.in exactly)                 */
 /* ------------------------------------------------------------------ */
 typedef enum {
-	AS_CONTROL = 0,
-	AS_NOTIFY  = 1,
-	AS_OUT_L   = 2,
-	AS_OUT_R   = 3,
-	AS_START   = 4,
-	AS_END     = 5,
-	AS_ATTACK  = 6,
-	AS_DECAY   = 7,
-	AS_SUSTAIN = 8,
-	AS_RELEASE = 9,
-	AS_GATE    = 10,
-	AS_STOP    = 11,
+	AS_CONTROL     = 0,
+	AS_NOTIFY      = 1,
+	AS_OUT_L       = 2,
+	AS_OUT_R       = 3,
+	AS_START       = 4,
+	AS_END         = 5,
+	AS_ATTACK      = 6,
+	AS_DECAY       = 7,
+	AS_SUSTAIN     = 8,
+	AS_RELEASE     = 9,
+	AS_GATE        = 10,
+	AS_STOP        = 11,
+	AS_PREV_SAMPLE = 12,
+	AS_NEXT_SAMPLE = 13,
 } PortIndex;
 
 /* ------------------------------------------------------------------ */
@@ -123,8 +130,10 @@ typedef struct {
 /* ------------------------------------------------------------------ */
 /* Worker messages                                                      */
 /* ------------------------------------------------------------------ */
-#define MSG_LOAD_FILE  1
-#define MSG_FILE_READY 2
+#define MSG_LOAD_FILE    1
+#define MSG_FILE_READY   2
+#define MSG_BROWSE       3   /* prev/next: direction -1 or +1          */
+#define MSG_BROWSE_DONE  4   /* response: new path + decoded audio     */
 
 typedef struct {
 	int  type;
@@ -132,10 +141,17 @@ typedef struct {
 } MsgLoad;
 
 typedef struct {
+	int  type;
+	int  direction;   /* -1 = prev, +1 = next */
+	char path[4096];  /* current file path     */
+} MsgBrowse;
+
+typedef struct {
 	int      type;
 	float*   data;
 	uint32_t n_frames;
 	uint32_t n_channels;
+	char     new_path[4096]; /* the file that was actually loaded */
 } MsgReady;
 
 /* ------------------------------------------------------------------ */
@@ -155,6 +171,8 @@ typedef struct {
 	const float* p_release;
 	const float* p_gate;
 	const float* p_stop;
+	const float* p_prev;
+	const float* p_next;
 
 	/* features */
 	LV2_URID_Map*        map;
@@ -185,6 +203,7 @@ typedef struct {
 	float*   pending_data;
 	uint32_t pending_frames;
 	uint32_t pending_channels;
+	char     pending_path[4096]; /* path of the pending sample */
 
 	/* voices */
 	Voice    voices[MAX_VOICES];
@@ -194,13 +213,46 @@ typedef struct {
 	char     current_path[4096];
 	bool     inform_ui;
 
-	/* stop tracking */
+	/* trigger edge tracking */
 	float    prev_stop;
+	float    prev_prev;
+	float    prev_next;
 
 	/* inline display */
 	LV2_Inline_Display_Image_Surface* display;
 	bool     need_expose;
 } ASampler;
+
+/* ------------------------------------------------------------------ */
+/* Audio file extension check                                           */
+/* ------------------------------------------------------------------ */
+static int
+is_audio_file (const char* name)
+{
+	const char* dot = strrchr (name, '.');
+	if (!dot) return 0;
+	/* case-insensitive compare of a few common extensions */
+	char ext[16];
+	int i;
+	for (i = 0; i < 15 && dot[1 + i]; ++i)
+		ext[i] = (char)((dot[1 + i] >= 'A' && dot[1 + i] <= 'Z')
+		                ? dot[1 + i] + 32 : dot[1 + i]);
+	ext[i] = '\0';
+	return (!strcmp (ext, "wav")  || !strcmp (ext, "flac") ||
+	        !strcmp (ext, "aif")  || !strcmp (ext, "aiff") ||
+	        !strcmp (ext, "ogg")  || !strcmp (ext, "mp3")  ||
+	        !strcmp (ext, "w64")  || !strcmp (ext, "caf"));
+}
+
+static int
+cmp_str (const void* a, const void* b)
+{
+	/* qsort passes pointers to the array elements (char*), so cast via
+	 * void* to avoid -Wcast-qual on the intermediate char** */
+	char* const* pa = (char* const*)a;
+	char* const* pb = (char* const*)b;
+	return strcmp (*pa, *pb);
+}
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                              */
@@ -397,6 +449,8 @@ instantiate (const LV2_Descriptor*     descriptor,
 	if (!self) return NULL;
 	self->sample_rate = rate;
 	self->prev_stop   = 0.f;
+	self->prev_prev   = 0.f;
+	self->prev_next   = 0.f;
 
 	for (int i = 0; features[i]; ++i) {
 		if (!strcmp (features[i]->URI, LV2_URID__map))
@@ -436,18 +490,20 @@ connect_port (LV2_Handle instance, uint32_t port, void* data)
 {
 	ASampler* self = (ASampler*)instance;
 	switch ((PortIndex)port) {
-	case AS_CONTROL: self->control   = (const LV2_Atom_Sequence*)data; break;
-	case AS_NOTIFY:  self->notify    = (LV2_Atom_Sequence*)data;       break;
-	case AS_OUT_L:   self->out_l     = (float*)data;                   break;
-	case AS_OUT_R:   self->out_r     = (float*)data;                   break;
-	case AS_START:   self->p_start   = (const float*)data;             break;
-	case AS_END:     self->p_end     = (const float*)data;             break;
-	case AS_ATTACK:  self->p_attack  = (const float*)data;             break;
-	case AS_DECAY:   self->p_decay   = (const float*)data;             break;
-	case AS_SUSTAIN: self->p_sustain = (const float*)data;             break;
-	case AS_RELEASE: self->p_release = (const float*)data;             break;
-	case AS_GATE:    self->p_gate    = (const float*)data;             break;
-	case AS_STOP:    self->p_stop    = (const float*)data;             break;
+	case AS_CONTROL:     self->control   = (const LV2_Atom_Sequence*)data; break;
+	case AS_NOTIFY:      self->notify    = (LV2_Atom_Sequence*)data;       break;
+	case AS_OUT_L:       self->out_l     = (float*)data;                   break;
+	case AS_OUT_R:       self->out_r     = (float*)data;                   break;
+	case AS_START:       self->p_start   = (const float*)data;             break;
+	case AS_END:         self->p_end     = (const float*)data;             break;
+	case AS_ATTACK:      self->p_attack  = (const float*)data;             break;
+	case AS_DECAY:       self->p_decay   = (const float*)data;             break;
+	case AS_SUSTAIN:     self->p_sustain = (const float*)data;             break;
+	case AS_RELEASE:     self->p_release = (const float*)data;             break;
+	case AS_GATE:        self->p_gate    = (const float*)data;             break;
+	case AS_STOP:        self->p_stop    = (const float*)data;             break;
+	case AS_PREV_SAMPLE: self->p_prev    = (const float*)data;             break;
+	case AS_NEXT_SAMPLE: self->p_next    = (const float*)data;             break;
 	}
 }
 
@@ -458,6 +514,8 @@ activate (LV2_Handle instance)
 	memset (self->voices, 0, sizeof (self->voices));
 	self->inform_ui  = true;
 	self->prev_stop  = 0.f;
+	self->prev_prev  = 0.f;
+	self->prev_next  = 0.f;
 }
 
 static void
@@ -472,17 +530,51 @@ run (LV2_Handle instance, uint32_t n_samples)
 		self->sample_frames   = self->pending_frames;
 		self->sample_channels = self->pending_channels;
 		self->pending_data    = NULL;
+		/* Update current path if a browse result set a new path */
+		if (self->pending_path[0] != '\0') {
+			strncpy (self->current_path, self->pending_path, sizeof (self->current_path) - 1);
+			self->current_path[sizeof (self->current_path) - 1] = '\0';
+			self->pending_path[0] = '\0';
+		}
 		memset (self->voices, 0, sizeof (self->voices));
 		self->inform_ui   = true;
 		self->need_expose = true;
 	}
 
-	/* Check Stop trigger (rising edge on the port) */
+	/* Check Stop trigger (rising edge) */
 	float cur_stop = self->p_stop ? *self->p_stop : 0.f;
 	if (cur_stop > 0.5f && self->prev_stop <= 0.5f) {
 		stop_all (self);
 	}
 	self->prev_stop = cur_stop;
+
+	/* Check Prev Sample trigger (rising edge) */
+	float cur_prev = self->p_prev ? *self->p_prev : 0.f;
+	if (cur_prev > 0.5f && self->prev_prev <= 0.5f) {
+		if (self->current_path[0] != '\0') {
+			MsgBrowse msg;
+			msg.type      = MSG_BROWSE;
+			msg.direction = -1;
+			strncpy (msg.path, self->current_path, sizeof (msg.path) - 1);
+			msg.path[sizeof (msg.path) - 1] = '\0';
+			self->schedule->schedule_work (self->schedule->handle, sizeof (msg), &msg);
+		}
+	}
+	self->prev_prev = cur_prev;
+
+	/* Check Next Sample trigger (rising edge) */
+	float cur_next = self->p_next ? *self->p_next : 0.f;
+	if (cur_next > 0.5f && self->prev_next <= 0.5f) {
+		if (self->current_path[0] != '\0') {
+			MsgBrowse msg;
+			msg.type      = MSG_BROWSE;
+			msg.direction = +1;
+			strncpy (msg.path, self->current_path, sizeof (msg.path) - 1);
+			msg.path[sizeof (msg.path) - 1] = '\0';
+			self->schedule->schedule_work (self->schedule->handle, sizeof (msg), &msg);
+		}
+	}
+	self->prev_next = cur_next;
 
 	/* Set up notify forge */
 	const uint32_t capacity = self->notify->atom.size;
@@ -547,15 +639,8 @@ run (LV2_Handle instance, uint32_t n_samples)
 
 			uint32_t pos = (uint32_t)v->read_pos;
 			if (pos >= self->sample_frames) {
-				/* Reached end of playback range */
-				if (v->oneshot) {
-					/* one-shot: after end, start release */
-					v->env_state         = ENV_RELEASE;
-					v->env_release_level = v->env_level;
-				} else {
-					v->env_state         = ENV_RELEASE;
-					v->env_release_level = v->env_level;
-				}
+				v->env_state         = ENV_RELEASE;
+				v->env_release_level = v->env_level;
 				continue;
 			}
 			float sl, sr;
@@ -610,40 +695,27 @@ cleanup (LV2_Handle instance)
 /* LV2 Worker                                                           */
 /* ------------------------------------------------------------------ */
 
-static LV2_Worker_Status
-work (LV2_Handle                  instance,
-      LV2_Worker_Respond_Function respond,
-      LV2_Worker_Respond_Handle   handle,
-      uint32_t                    size,
-      const void*                 data)
+/* Load audio from path, fill in resp.  Returns 0 on success. */
+static int
+load_audio_file (const char* path, MsgReady* resp)
 {
-	ASampler*      self = (ASampler*)instance;
-	const MsgLoad* msg  = (const MsgLoad*)data;
-	(void)size;
-
-	if (msg->type != MSG_LOAD_FILE) return LV2_WORKER_ERR_UNKNOWN;
-
 	SF_INFO info;
 	memset (&info, 0, sizeof (info));
-	SNDFILE* sf = sf_open (msg->path, SFM_READ, &info);
-	if (!sf) {
-		lv2_log_error (&self->logger, "a-sampler: cannot open '%s': %s\n",
-		               msg->path, sf_strerror (NULL));
-		return LV2_WORKER_ERR_UNKNOWN;
-	}
+	SNDFILE* sf = sf_open (path, SFM_READ, &info);
+	if (!sf) return -1;
 
 	uint32_t n_ch = (uint32_t)(info.channels > 2 ? 2 : info.channels);
 
 	float* raw = (float*)malloc (sizeof (float) * (uint32_t)info.channels * (uint32_t)info.frames);
-	if (!raw) { sf_close (sf); return LV2_WORKER_ERR_NO_SPACE; }
+	if (!raw) { sf_close (sf); return -1; }
 
 	sf_count_t got = sf_readf_float (sf, raw, info.frames);
 	sf_close (sf);
 
-	if (got <= 0) { free (raw); return LV2_WORKER_ERR_UNKNOWN; }
+	if (got <= 0) { free (raw); return -1; }
 
 	float* buf = (float*)malloc (sizeof (float) * n_ch * (uint32_t)got);
-	if (!buf) { free (raw); return LV2_WORKER_ERR_NO_SPACE; }
+	if (!buf) { free (raw); return -1; }
 
 	for (uint32_t f = 0; f < (uint32_t)got; ++f) {
 		if (n_ch == 1) {
@@ -655,13 +727,131 @@ work (LV2_Handle                  instance,
 	}
 	free (raw);
 
-	MsgReady resp;
-	resp.type       = MSG_FILE_READY;
-	resp.data       = buf;
-	resp.n_frames   = (uint32_t)got;
-	resp.n_channels = n_ch;
-	respond (handle, sizeof (resp), &resp);
-	return LV2_WORKER_SUCCESS;
+	resp->data       = buf;
+	resp->n_frames   = (uint32_t)got;
+	resp->n_channels = n_ch;
+	return 0;
+}
+
+static LV2_Worker_Status
+work (LV2_Handle                  instance,
+      LV2_Worker_Respond_Function respond,
+      LV2_Worker_Respond_Handle   handle,
+      uint32_t                    size,
+      const void*                 data)
+{
+	ASampler*      self = (ASampler*)instance;
+	const int*     type = (const int*)data;
+	(void)size;
+
+	if (*type == MSG_LOAD_FILE) {
+		const MsgLoad* msg = (const MsgLoad*)data;
+		MsgReady resp;
+		memset (&resp, 0, sizeof (resp));
+		resp.type = MSG_FILE_READY;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-truncation"
+		strncpy (resp.new_path, msg->path, sizeof (resp.new_path) - 1);
+#pragma GCC diagnostic pop
+
+		if (load_audio_file (msg->path, &resp) != 0) {
+			lv2_log_error (&self->logger, "a-sampler: cannot open '%s'\n", msg->path);
+			return LV2_WORKER_ERR_UNKNOWN;
+		}
+		respond (handle, sizeof (resp), &resp);
+		return LV2_WORKER_SUCCESS;
+
+	} else if (*type == MSG_BROWSE) {
+		const MsgBrowse* msg = (const MsgBrowse*)data;
+
+		/* Split current path into directory + basename */
+		char dir[4096];
+		strncpy (dir, msg->path, sizeof (dir) - 1);
+		dir[sizeof (dir) - 1] = '\0';
+		char* slash = strrchr (dir, '/');
+		if (!slash) return LV2_WORKER_ERR_UNKNOWN; /* no directory info */
+		*slash = '\0'; /* dir now holds the directory, slash+1 = current basename */
+		const char* cur_name = slash + 1;
+
+		/* Collect audio files in directory */
+		DIR* dp = opendir (dir);
+		if (!dp) return LV2_WORKER_ERR_UNKNOWN;
+
+		char** names  = NULL;
+		int    n_names = 0;
+		int    cap     = 0;
+
+		struct dirent* de;
+		while ((de = readdir (dp)) != NULL) {
+			if (de->d_name[0] == '.') continue;
+			if (!is_audio_file (de->d_name)) continue;
+			if (n_names >= cap) {
+				int new_cap = cap ? cap * 2 : 64;
+				char** tmp = (char**)realloc (names, (size_t)new_cap * sizeof (char*));
+				if (!tmp) break;
+				names = tmp;
+				cap   = new_cap;
+			}
+			names[n_names++] = strdup (de->d_name);
+		}
+		closedir (dp);
+
+		if (n_names == 0) {
+			/* free whatever we got */
+			for (int i = 0; i < n_names; ++i) free (names[i]);
+			free (names);
+			return LV2_WORKER_ERR_UNKNOWN;
+		}
+
+		/* Sort alphabetically */
+		qsort (names, (size_t)n_names, sizeof (char*), cmp_str);
+
+		/* Find the current file */
+		int cur_idx = -1;
+		for (int i = 0; i < n_names; ++i) {
+			if (!strcmp (names[i], cur_name)) { cur_idx = i; break; }
+		}
+		if (cur_idx < 0) cur_idx = 0; /* current not found — start from beginning */
+
+		/* Step */
+		int new_idx = cur_idx + msg->direction;
+		/* Wrap around */
+		if (new_idx < 0)        new_idx = n_names - 1;
+		if (new_idx >= n_names) new_idx = 0;
+
+		/* Build full path of new file */
+		char new_path[4096];
+		/* Use strncat to avoid snprintf format-truncation warning */
+		new_path[0] = '\0';
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-truncation"
+		strncat (new_path, dir, sizeof (new_path) - 2);
+		strncat (new_path, "/", 1);
+		strncat (new_path, names[new_idx], sizeof (new_path) - strlen (new_path) - 1);
+#pragma GCC diagnostic pop
+
+		/* Free name list */
+		for (int i = 0; i < n_names; ++i) free (names[i]);
+		free (names);
+
+		/* Load the new file */
+		MsgReady resp;
+		memset (&resp, 0, sizeof (resp));
+		resp.type = MSG_FILE_READY;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-truncation"
+		strncpy (resp.new_path, new_path, sizeof (resp.new_path) - 1);
+#pragma GCC diagnostic pop
+
+		if (load_audio_file (new_path, &resp) != 0) {
+			lv2_log_error (&self->logger, "a-sampler: cannot browse to '%s'\n", new_path);
+			return LV2_WORKER_ERR_UNKNOWN;
+		}
+		respond (handle, sizeof (resp), &resp);
+		return LV2_WORKER_SUCCESS;
+	}
+
+	return LV2_WORKER_ERR_UNKNOWN;
 }
 
 static LV2_Worker_Status
@@ -677,6 +867,9 @@ work_response (LV2_Handle  instance,
 	self->pending_data     = resp->data;
 	self->pending_frames   = resp->n_frames;
 	self->pending_channels = resp->n_channels;
+	/* Store the new path so run() can update current_path */
+	strncpy (self->pending_path, resp->new_path, sizeof (self->pending_path) - 1);
+	self->pending_path[sizeof (self->pending_path) - 1] = '\0';
 	return LV2_WORKER_SUCCESS;
 }
 
@@ -782,7 +975,7 @@ render_inline (LV2_Handle instance, uint32_t w, uint32_t max_h)
 		self->display->data, CAIRO_FORMAT_ARGB32, (int)w, (int)h, (int)(4 * w));
 	cairo_t* cr = cairo_create (surface);
 
-	/* Background -- slightly darker gradient */
+	/* Background gradient */
 	{
 		cairo_pattern_t* pat = cairo_pattern_create_linear (0, 0, 0, h);
 		cairo_pattern_add_color_stop_rgb (pat, 0.0, 0.18, 0.18, 0.18);
@@ -793,7 +986,7 @@ render_inline (LV2_Handle instance, uint32_t w, uint32_t max_h)
 	}
 
 	if (!self->sample_data || self->sample_frames == 0) {
-		/* Placeholder: dashed border + text */
+		/* Placeholder: dashed border + down-arrow + label */
 		cairo_set_source_rgba (cr, 0.55, 0.55, 0.55, 0.6);
 		double dash[] = { 4.0, 4.0 };
 		cairo_set_dash (cr, dash, 2, 0);
@@ -844,14 +1037,12 @@ render_inline (LV2_Handle instance, uint32_t w, uint32_t max_h)
 			cairo_fill (cr);
 		}
 
-		/* Waveform -- render as filled envelope (top and bottom) */
+		/* Waveform columns */
 		cairo_set_source_rgba (cr, 0.25, 0.75, 0.35, 0.9);
 		cairo_set_line_width (cr, 1.0);
 		double mid  = h / 2.0;
 		double gain = mid * 0.88;
 
-		/* Build top path and bottom path simultaneously */
-		cairo_move_to (cr, 0.5, mid);
 		for (uint32_t x = 0; x < w; ++x) {
 			uint32_t i0 = (uint32_t)((double)x       / w * total);
 			uint32_t i1 = (uint32_t)((double)(x + 1) / w * total);
@@ -864,7 +1055,6 @@ render_inline (LV2_Handle instance, uint32_t w, uint32_t max_h)
 				if (s < mn) mn = s;
 				if (s > mx) mx = s;
 			}
-			/* Vertical line for this column */
 			cairo_move_to (cr, x + 0.5, mid - mx * gain);
 			cairo_line_to (cr, x + 0.5, mid - mn * gain);
 		}
@@ -877,25 +1067,24 @@ render_inline (LV2_Handle instance, uint32_t w, uint32_t max_h)
 		cairo_line_to (cr, w, mid);
 		cairo_stroke (cr);
 
-		/* Start marker (bright green) */
+		/* Start marker (green) */
 		cairo_set_source_rgba (cr, 0.3, 1.0, 0.3, 0.9);
 		cairo_set_line_width (cr, 1.5);
 		cairo_move_to (cr, (double)w * sn, 0);
 		cairo_line_to (cr, (double)w * sn, h);
 		cairo_stroke (cr);
 
-		/* End marker (bright red) */
+		/* End marker (red) */
 		cairo_set_source_rgba (cr, 1.0, 0.35, 0.35, 0.9);
 		cairo_set_line_width (cr, 1.5);
 		cairo_move_to (cr, (double)w * en, 0);
 		cairo_line_to (cr, (double)w * en, h);
 		cairo_stroke (cr);
 
-		/* Filename label (bottom-left, small) */
+		/* Filename label */
 		{
 			cairo_set_source_rgba (cr, 0.85, 0.85, 0.85, 0.7);
 			cairo_set_font_size (cr, 9.0);
-			/* Extract basename */
 			const char* slash = strrchr (self->current_path, '/');
 			const char* fname = slash ? slash + 1 : self->current_path;
 			cairo_move_to (cr, 5, h - 5);
