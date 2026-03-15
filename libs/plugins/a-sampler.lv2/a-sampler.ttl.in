@@ -27,9 +27,10 @@
         lv2:requiredFeature urid:map, work:schedule ;
         lv2:extensionData state:interface, work:interface ;
         patch:writable <urn:ardour:a-sampler:sampleFile> ;
-        rdfs:comment """A simple one-shot sampler. Drag and drop a WAV/AIFF/FLAC file
-onto the inline display; any incoming MIDI note triggers playback.
-Provides Start, End, Attack, Decay, Sustain and Release controls.""" ;
+        rdfs:comment """ACE one-shot sampler. Drop a WAV/AIFF/FLAC onto the waveform display.
+Gate ON = play while note held (ADSR envelope).
+Gate OFF = one-shot: plays the whole sample on each note-on regardless of note length.
+Stop button silences all voices immediately.""" ;
 
         lv2:port
         [
@@ -90,8 +91,8 @@ Provides Start, End, Attack, Decay, Sustain and Release controls.""" ;
                 lv2:index 6 ;
                 lv2:symbol "attack" ;
                 lv2:name "Attack" ;
-                lv2:default 0.005 ;
-                lv2:minimum 0.0 ;
+                lv2:default 0.002 ;
+                lv2:minimum 0.001 ;
                 lv2:maximum 4.0 ;
                 units:unit units:s ;
         ] ,
@@ -101,7 +102,7 @@ Provides Start, End, Attack, Decay, Sustain and Release controls.""" ;
                 lv2:symbol "decay" ;
                 lv2:name "Decay" ;
                 lv2:default 0.1 ;
-                lv2:minimum 0.0 ;
+                lv2:minimum 0.001 ;
                 lv2:maximum 4.0 ;
                 units:unit units:s ;
         ] ,
@@ -121,7 +122,27 @@ Provides Start, End, Attack, Decay, Sustain and Release controls.""" ;
                 lv2:symbol "release" ;
                 lv2:name "Release" ;
                 lv2:default 0.05 ;
-                lv2:minimum 0.0 ;
+                lv2:minimum 0.001 ;
                 lv2:maximum 8.0 ;
                 units:unit units:s ;
+        ] ,
+        [
+                a lv2:ControlPort, lv2:InputPort ;
+                lv2:index 10 ;
+                lv2:symbol "gate" ;
+                lv2:name "Gate" ;
+                lv2:portProperty lv2:toggled ;
+                lv2:default 1 ;
+                lv2:minimum 0 ;
+                lv2:maximum 1 ;
+        ] ,
+        [
+                a lv2:ControlPort, lv2:InputPort ;
+                lv2:index 11 ;
+                lv2:symbol "stop" ;
+                lv2:name "Stop" ;
+                lv2:portProperty lv2:toggled, lv2:trigger ;
+                lv2:default 0 ;
+                lv2:minimum 0 ;
+                lv2:maximum 1 ;
         ] .
