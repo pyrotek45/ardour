@@ -1,0 +1,127 @@
+@prefix atom:  <http://lv2plug.in/ns/ext/atom#> .
+@prefix doap:  <http://usefulinc.com/ns/doap#> .
+@prefix foaf:  <http://xmlns.com/foaf/0.1/> .
+@prefix lv2:   <http://lv2plug.in/ns/lv2core#> .
+@prefix midi:  <http://lv2plug.in/ns/ext/midi#> .
+@prefix param: <http://lv2plug.in/ns/ext/parameters#> .
+@prefix patch: <http://lv2plug.in/ns/ext/patch#> .
+@prefix pg:    <http://lv2plug.in/ns/ext/port-groups#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix state: <http://lv2plug.in/ns/ext/state#> .
+@prefix units: <http://lv2plug.in/ns/extensions/units#> .
+@prefix urid:  <http://lv2plug.in/ns/ext/urid#> .
+@prefix work:  <http://lv2plug.in/ns/ext/worker#> .
+
+<urn:ardour:a-sampler:sampleFile>
+        a lv2:Parameter ;
+        rdfs:label "Sample File" ;
+        rdfs:range atom:Path .
+
+<https://ardour.org/plugins/a-sampler>
+        a lv2:Plugin, lv2:InstrumentPlugin, doap:Project ;
+        doap:license <http://usefulinc.com/doap/licenses/gpl> ;
+        doap:maintainer [ foaf:name "Ardour Community" ; foaf:homepage <http://ardour.org/> ] ;
+        doap:name "ACE Sampler" ;
+        lv2:optionalFeature lv2:hardRTCapable ;
+        lv2:requiredFeature urid:map, work:schedule ;
+        lv2:extensionData state:interface, work:interface ;
+        patch:writable <urn:ardour:a-sampler:sampleFile> ;
+        rdfs:comment """A simple one-shot sampler. Drag and drop a WAV/AIFF/FLAC file
+onto the inline display; any incoming MIDI note triggers playback.
+Provides Start, End, Attack, Decay, Sustain and Release controls.""" ;
+
+        lv2:port
+        [
+                a atom:AtomPort, lv2:InputPort ;
+                atom:bufferType atom:Sequence ;
+                atom:supports midi:MidiEvent ;
+                atom:supports patch:Message ;
+                lv2:designation lv2:control ;
+                lv2:index 0 ;
+                lv2:symbol "control" ;
+                lv2:name "MIDI In / Control" ;
+        ] ,
+        [
+                a atom:AtomPort, lv2:OutputPort ;
+                atom:bufferType atom:Sequence ;
+                atom:supports patch:Message ;
+                lv2:designation lv2:control ;
+                lv2:index 1 ;
+                lv2:symbol "notify" ;
+                lv2:name "Notify" ;
+        ] ,
+        [
+                a lv2:AudioPort, lv2:OutputPort ;
+                lv2:index 2 ;
+                lv2:symbol "out_l" ;
+                lv2:name "Left Output" ;
+                lv2:designation pg:left ;
+        ] ,
+        [
+                a lv2:AudioPort, lv2:OutputPort ;
+                lv2:index 3 ;
+                lv2:symbol "out_r" ;
+                lv2:name "Right Output" ;
+                lv2:designation pg:right ;
+        ] ,
+        [
+                a lv2:ControlPort, lv2:InputPort ;
+                lv2:index 4 ;
+                lv2:symbol "start" ;
+                lv2:name "Start" ;
+                lv2:default 0.0 ;
+                lv2:minimum 0.0 ;
+                lv2:maximum 1.0 ;
+                units:unit units:coef ;
+        ] ,
+        [
+                a lv2:ControlPort, lv2:InputPort ;
+                lv2:index 5 ;
+                lv2:symbol "end" ;
+                lv2:name "End" ;
+                lv2:default 1.0 ;
+                lv2:minimum 0.0 ;
+                lv2:maximum 1.0 ;
+                units:unit units:coef ;
+        ] ,
+        [
+                a lv2:ControlPort, lv2:InputPort ;
+                lv2:index 6 ;
+                lv2:symbol "attack" ;
+                lv2:name "Attack" ;
+                lv2:default 0.005 ;
+                lv2:minimum 0.0 ;
+                lv2:maximum 4.0 ;
+                units:unit units:s ;
+        ] ,
+        [
+                a lv2:ControlPort, lv2:InputPort ;
+                lv2:index 7 ;
+                lv2:symbol "decay" ;
+                lv2:name "Decay" ;
+                lv2:default 0.1 ;
+                lv2:minimum 0.0 ;
+                lv2:maximum 4.0 ;
+                units:unit units:s ;
+        ] ,
+        [
+                a lv2:ControlPort, lv2:InputPort ;
+                lv2:index 8 ;
+                lv2:symbol "sustain" ;
+                lv2:name "Sustain" ;
+                lv2:default 1.0 ;
+                lv2:minimum 0.0 ;
+                lv2:maximum 1.0 ;
+                units:unit units:coef ;
+        ] ,
+        [
+                a lv2:ControlPort, lv2:InputPort ;
+                lv2:index 9 ;
+                lv2:symbol "release" ;
+                lv2:name "Release" ;
+                lv2:default 0.05 ;
+                lv2:minimum 0.0 ;
+                lv2:maximum 8.0 ;
+                units:unit units:s ;
+        ] .

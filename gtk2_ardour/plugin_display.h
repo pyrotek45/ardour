@@ -26,31 +26,35 @@
 class PluginDisplay : public Gtk::DrawingArea
 {
 public:
-	PluginDisplay(std::shared_ptr<ARDOUR::Plugin>, uint32_t max_height = 80);
-	virtual ~PluginDisplay();
+        PluginDisplay(std::shared_ptr<ARDOUR::Plugin>, uint32_t max_height = 80);
+        virtual ~PluginDisplay();
 
 protected:
-	bool on_expose_event (GdkEventExpose *);
-	void on_size_request (Gtk::Requisition* req);
-	bool on_button_press_event (GdkEventButton *ev);
-	bool on_button_release_event (GdkEventButton *ev);
+        bool on_expose_event (GdkEventExpose *);
+        void on_size_request (Gtk::Requisition* req);
+        bool on_button_press_event (GdkEventButton *ev);
+        bool on_button_release_event (GdkEventButton *ev);
+        void on_drag_data_received (Glib::RefPtr<Gdk::DragContext> const&,
+                                    int, int,
+                                    Gtk::SelectionData const&,
+                                    guint, guint);
 
-	void plugin_going_away () {
-		_qdraw_connection.disconnect ();
-	}
+        void plugin_going_away () {
+                _qdraw_connection.disconnect ();
+        }
 
-	virtual void update_height_alloc (uint32_t inline_height);
-	virtual uint32_t render_inline (cairo_t *, uint32_t width);
+        virtual void update_height_alloc (uint32_t inline_height);
+        virtual uint32_t render_inline (cairo_t *, uint32_t width);
 
-	virtual void display_frame (cairo_t* cr, double w, double h);
+        virtual void display_frame (cairo_t* cr, double w, double h);
 
-	std::shared_ptr<ARDOUR::Plugin> _plug;
-	PBD::ScopedConnection _qdraw_connection;
-	PBD::ScopedConnection _death_connection;
-	cairo_surface_t* _surf;
-	uint32_t _max_height;
-	uint32_t _cur_height;
-	bool _scroll;
+        std::shared_ptr<ARDOUR::Plugin> _plug;
+        PBD::ScopedConnection _qdraw_connection;
+        PBD::ScopedConnection _death_connection;
+        cairo_surface_t* _surf;
+        uint32_t _max_height;
+        uint32_t _cur_height;
+        bool _scroll;
 };
 
 #endif

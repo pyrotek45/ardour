@@ -17,13 +17,18 @@
  */
 
 #include <ytkmm/container.h>
+#include <ytkmm/targetentry.h>
 
 #include "gtkmm2ext/colors.h"
 #include "gtkmm2ext/gtk_ui.h"
 #include "gtkmm2ext/gui_thread.h"
 #include "gtkmm2ext/utils.h"
 
+#include "ardour/parameter_descriptor.h"
+#include "ardour/variant.h"
+
 #include "ui_config.h"
+#include "utils.h"
 
 #include "plugin_display.h"
 
@@ -40,6 +45,19 @@ PluginDisplay::PluginDisplay (std::shared_ptr<ARDOUR::Plugin> p, uint32_t max_he
 	_plug->DropReferences.connect (_death_connection, invalidator (*this), std::bind (&PluginDisplay::plugin_going_away, this), gui_context());
 	_plug->QueueDraw.connect (_qdraw_connection, invalidator (*this),
 			std::bind (&Gtk::Widget::queue_draw, this), gui_context ());
+
+	/* Accept file drops if the plugin exposes at least one atom:Path property */
+	const ARDOUR::Plugin::PropertyDescriptors& props = _plug->get_supported_properties ();
+	for (auto const& kv : props) {
+		if (kv.second.datatype == ARDOUR::Variant::PATH) {
+			std::vector<Gtk::TargetEntry> targets;
+			targets.push_back (Gtk::TargetEntry ("text/uri-list"));
+			drag_dest_set (targets, Gtk::DEST_DEFAULT_ALL, Gdk::ACTION_COPY);
+			signal_drag_data_received ().connect (
+				sigc::mem_fun (*this, &PluginDisplay::on_drag_data_received));
+			break;
+		}
+	}
 }
 
 PluginDisplay::~PluginDisplay ()
@@ -49,9 +67,33 @@ PluginDisplay::~PluginDisplay ()
 	}
 }
 
-bool
-PluginDisplay::on_button_press_event (GdkEventButton *ev)
+void
+PluginDisplay::on_drag_data_received (Glib::RefPtr<Gdk::DragContext> const& context,
+                                      int /*x*/, int /*y*/,
+                                      Gtk::SelectionData const& data,
+                                      guint /*info*/, guint time)
 {
+	std::vector<std::string> paths;
+	if (!ARDOUR_UI_UTILS::convert_drop_to_paths (paths, data) || paths.empty ()) {
+		context->drag_finish (false, false, time);
+		return;
+	}
+
+	/* Find the first atom:Path property and set it */
+	const ARDOUR::Plugin::PropertyDescriptors& props = _plug->get_supported_properties ();
+	for (auto const& kv : props) {
+		if (kv.second.datatype == ARDOUR::Variant::PATH) {
+			_plug->set_property (kv.first,
+			                     ARDOUR::Variant (ARDOUR::Variant::PATH, paths.front ()));
+			context->drag_finish (true, false, time);
+			return;
+		}
+	}
+	context->drag_finish (false, false, time);
+}
+
+bool
+PluginDisplay::on_button_press_event (GdkEventButton *ev){
 	return false;
 }
 
