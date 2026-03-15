@@ -24,8 +24,10 @@
         doap:maintainer [ foaf:name "Ardour Community" ; foaf:homepage <http://ardour.org/> ] ;
         doap:name "ACE Sampler" ;
         lv2:optionalFeature lv2:hardRTCapable ;
+        lv2:optionalFeature <http://harrisonconsoles.com/lv2/inlinedisplay#in_gui> ;
         lv2:requiredFeature urid:map, work:schedule ;
         lv2:extensionData state:interface, work:interface ;
+        lv2:extensionData <http://harrisonconsoles.com/lv2/inlinedisplay#interface> ;
         patch:writable <urn:ardour:a-sampler:sampleFile> ;
         rdfs:comment """ACE one-shot sampler. Drop a WAV/AIFF/FLAC onto the waveform display.
 Gate ON = play while note held (ADSR envelope).
@@ -141,7 +143,7 @@ Stop button silences all voices immediately.""" ;
                 lv2:index 11 ;
                 lv2:symbol "stop" ;
                 lv2:name "Stop" ;
-                lv2:portProperty lv2:toggled, lv2:trigger ;
+                lv2:portProperty lv2:trigger ;
                 lv2:default 0 ;
                 lv2:minimum 0 ;
                 lv2:maximum 1 ;
