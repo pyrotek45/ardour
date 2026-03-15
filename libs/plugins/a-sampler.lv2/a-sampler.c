@@ -8,14 +8,17 @@
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
  *
- * Any incoming MIDI note-on triggers playback of the loaded sample shaped by
- * an ADSR amplitude envelope.  Note-off begins the release phase.
+ * Gate mode ON  (default): classic gate -- note-off starts Release phase.
+ * Gate mode OFF (one-shot): note-on fires the sample from the beginning;
+ *   the playback continues even after note-off.  A new note-on (any pitch)
+ *   immediately stops the previous voice and starts a fresh one.
+ *
+ * Stop port: a momentary trigger that silences all active voices immediately
+ *   (fast release, ~5ms).
  *
  * File loading uses the LV2 Worker extension so the RT thread is never blocked.
- * The host drives file selection via patch:Set (Variant::PATH) -- this is what
- * Ardour calls when a file is dropped onto the inline display or selected via
- * the generic UI file button.
- * The file path is saved / restored via LV2 State.
+ * File path is communicated via patch:Set / patch:Get on the atom ports.
+ * Path is saved / restored via LV2 State.
  */
 
 #define _GNU_SOURCE
@@ -53,6 +56,7 @@
 #endif
 
 #include "ardour/lv2_extensions.h"
+#include <cairo/cairo.h>
 
 /* ------------------------------------------------------------------ */
 /* Defines                                                              */
@@ -66,6 +70,9 @@
 #else
 #define x_forge_object lv2_atom_forge_blank
 #endif
+
+/* fast-stop release in samples (~5ms at any SR) */
+#define STOP_RELEASE_SAMPLES 256
 
 /* ------------------------------------------------------------------ */
 /* Port indices  (must match a-sampler.ttl.in exactly)                 */
@@ -81,6 +88,8 @@ typedef enum {
 	AS_DECAY   = 7,
 	AS_SUSTAIN = 8,
 	AS_RELEASE = 9,
+	AS_GATE    = 10,
+	AS_STOP    = 11,
 } PortIndex;
 
 /* ------------------------------------------------------------------ */
@@ -92,6 +101,7 @@ typedef enum {
 	ENV_DECAY   = 2,
 	ENV_SUSTAIN = 3,
 	ENV_RELEASE = 4,
+	ENV_FASTOFF = 5, /* used by Stop button -- very short fade */
 } EnvState;
 
 /* ------------------------------------------------------------------ */
@@ -107,6 +117,7 @@ typedef struct {
 	EnvState env_state;
 	double   env_level;
 	double   env_release_level;
+	int      oneshot;   /* 1 = play to end regardless of note-off */
 } Voice;
 
 /* ------------------------------------------------------------------ */
@@ -142,6 +153,8 @@ typedef struct {
 	const float* p_decay;
 	const float* p_sustain;
 	const float* p_release;
+	const float* p_gate;
+	const float* p_stop;
 
 	/* features */
 	LV2_URID_Map*        map;
@@ -181,6 +194,9 @@ typedef struct {
 	char     current_path[4096];
 	bool     inform_ui;
 
+	/* stop tracking */
+	float    prev_stop;
+
 	/* inline display */
 	LV2_Inline_Display_Image_Surface* display;
 	bool     need_expose;
@@ -196,7 +212,20 @@ find_free_voice (ASampler* self)
 	for (int i = 0; i < MAX_VOICES; ++i) {
 		if (!self->voices[i].active) return &self->voices[i];
 	}
-	return &self->voices[0]; /* steal first */
+	return &self->voices[0]; /* steal oldest */
+}
+
+/* In one-shot mode, kill all currently playing voices instantly (fast fade). */
+static void
+oneshot_kill_all (ASampler* self)
+{
+	for (int i = 0; i < MAX_VOICES; ++i) {
+		Voice* v = &self->voices[i];
+		if (v->active) {
+			v->env_state         = ENV_FASTOFF;
+			v->env_release_level = v->env_level;
+		}
+	}
 }
 
 static void
@@ -204,29 +233,59 @@ note_on (ASampler* self, int vel)
 {
 	if (!self->sample_data || self->sample_frames == 0) return;
 
-	Voice* v     = find_free_voice (self);
-	v->active    = 1;
-	v->velocity  = vel / 127.0f;
-	v->env_state = ENV_ATTACK;
-	v->env_level = 0.0;
+	int gate = (*self->p_gate > 0.5f) ? 1 : 0;
+
+	if (!gate) {
+		/* one-shot mode: stop any previous voice immediately */
+		oneshot_kill_all (self);
+	}
+
+	Voice* v       = find_free_voice (self);
+	v->active      = 1;
+	v->velocity    = vel / 127.0f;
+	v->env_state   = ENV_ATTACK;
+	v->env_level   = 0.0;
+	v->oneshot     = gate ? 0 : 1;
 
 	float s = *self->p_start;
 	float e = *self->p_end;
 	if (s < 0.f) s = 0.f;
 	if (e > 1.f) e = 1.f;
 	if (s > e) { float t = s; s = e; e = t; }
+	if (e - s < 1e-4f) e = s + 1e-4f;
+	if (e > 1.f) e = 1.f;
 
 	v->read_pos = s * (double)(self->sample_frames - 1);
 	v->read_end = e * (double)(self->sample_frames - 1);
+	if (v->read_end <= v->read_pos) v->read_end = v->read_pos + 1;
 }
 
+/* Gate note-off: only trigger release if gate mode is on */
 static void
-note_off_all (ASampler* self)
+note_off_gate (ASampler* self)
+{
+	int gate = (*self->p_gate > 0.5f) ? 1 : 0;
+	if (!gate) return; /* one-shot: ignore note-off */
+
+	for (int i = 0; i < MAX_VOICES; ++i) {
+		Voice* v = &self->voices[i];
+		if (v->active && v->env_state != ENV_RELEASE
+		              && v->env_state != ENV_FASTOFF
+		              && v->env_state != ENV_IDLE) {
+			v->env_state         = ENV_RELEASE;
+			v->env_release_level = v->env_level;
+		}
+	}
+}
+
+/* Stop all voices with a very fast fade (used by Stop button and CC123) */
+static void
+stop_all (ASampler* self)
 {
 	for (int i = 0; i < MAX_VOICES; ++i) {
 		Voice* v = &self->voices[i];
-		if (v->active && v->env_state != ENV_RELEASE && v->env_state != ENV_IDLE) {
-			v->env_state         = ENV_RELEASE;
+		if (v->active) {
+			v->env_state         = ENV_FASTOFF;
 			v->env_release_level = v->env_level;
 		}
 	}
@@ -240,24 +299,46 @@ adsr_tick (ASampler* self, Voice* v)
 	float  D  = *self->p_decay;
 	float  S  = *self->p_sustain;
 	float  R  = *self->p_release;
-	if (A < 1e-6f) A = 1e-6f;
-	if (D < 1e-6f) D = 1e-6f;
-	if (R < 1e-6f) R = 1e-6f;
+	/* clamp to minimum meaningful values */
+	if (A < 0.001f) A = 0.001f;
+	if (D < 0.001f) D = 0.001f;
+	if (R < 0.001f) R = 0.001f;
 
 	switch (v->env_state) {
 	case ENV_ATTACK:
 		v->env_level += 1.0 / (A * sr);
-		if (v->env_level >= 1.0) { v->env_level = 1.0; v->env_state = ENV_DECAY; }
+		if (v->env_level >= 1.0) {
+			v->env_level = 1.0;
+			v->env_state = ENV_DECAY;
+		}
 		break;
 	case ENV_DECAY:
-		v->env_level -= (1.0 - S) / (D * sr);
-		if (v->env_level <= (double)S) { v->env_level = S; v->env_state = ENV_SUSTAIN; }
+		v->env_level -= (1.0 - (double)S) / (D * sr);
+		if (v->env_level <= (double)S) {
+			v->env_level = (double)S;
+			v->env_state = ENV_SUSTAIN;
+		}
 		break;
 	case ENV_SUSTAIN:
-		v->env_level = S;
+		v->env_level = (double)S;
 		break;
 	case ENV_RELEASE:
-		v->env_level -= v->env_release_level / (R * sr);
+		if (v->env_release_level < 1e-9) {
+			v->env_level = 0.0;
+			v->env_state = ENV_IDLE;
+			v->active    = 0;
+		} else {
+			v->env_level -= v->env_release_level / (R * sr);
+			if (v->env_level <= 0.0) {
+				v->env_level = 0.0;
+				v->env_state = ENV_IDLE;
+				v->active    = 0;
+			}
+		}
+		break;
+	case ENV_FASTOFF:
+		/* ~5ms fade regardless of R setting */
+		v->env_level -= v->env_release_level / (double)STOP_RELEASE_SAMPLES;
 		if (v->env_level <= 0.0) {
 			v->env_level = 0.0;
 			v->env_state = ENV_IDLE;
@@ -315,6 +396,7 @@ instantiate (const LV2_Descriptor*     descriptor,
 	ASampler* self = (ASampler*)calloc (1, sizeof (ASampler));
 	if (!self) return NULL;
 	self->sample_rate = rate;
+	self->prev_stop   = 0.f;
 
 	for (int i = 0; features[i]; ++i) {
 		if (!strcmp (features[i]->URI, LV2_URID__map))
@@ -364,6 +446,8 @@ connect_port (LV2_Handle instance, uint32_t port, void* data)
 	case AS_DECAY:   self->p_decay   = (const float*)data;             break;
 	case AS_SUSTAIN: self->p_sustain = (const float*)data;             break;
 	case AS_RELEASE: self->p_release = (const float*)data;             break;
+	case AS_GATE:    self->p_gate    = (const float*)data;             break;
+	case AS_STOP:    self->p_stop    = (const float*)data;             break;
 	}
 }
 
@@ -372,7 +456,8 @@ activate (LV2_Handle instance)
 {
 	ASampler* self = (ASampler*)instance;
 	memset (self->voices, 0, sizeof (self->voices));
-	self->inform_ui = true;
+	self->inform_ui  = true;
+	self->prev_stop  = 0.f;
 }
 
 static void
@@ -391,6 +476,13 @@ run (LV2_Handle instance, uint32_t n_samples)
 		self->inform_ui   = true;
 		self->need_expose = true;
 	}
+
+	/* Check Stop trigger (rising edge on the port) */
+	float cur_stop = self->p_stop ? *self->p_stop : 0.f;
+	if (cur_stop > 0.5f && self->prev_stop <= 0.5f) {
+		stop_all (self);
+	}
+	self->prev_stop = cur_stop;
 
 	/* Set up notify forge */
 	const uint32_t capacity = self->notify->atom.size;
@@ -434,9 +526,12 @@ run (LV2_Handle instance, uint32_t n_samples)
 			if (type == 0x90 && midi[2] > 0) {
 				note_on (self, midi[2]);
 			} else if (type == 0x80 || (type == 0x90 && midi[2] == 0)) {
-				note_off_all (self);
-			} else if (type == 0xb0 && midi[1] == 123) {
-				note_off_all (self);
+				note_off_gate (self);
+			} else if (type == 0xb0) {
+				if (midi[1] == 123 || midi[1] == 120) {
+					/* All Notes Off / All Sound Off */
+					stop_all (self);
+				}
 			}
 		}
 	}
@@ -452,8 +547,15 @@ run (LV2_Handle instance, uint32_t n_samples)
 
 			uint32_t pos = (uint32_t)v->read_pos;
 			if (pos >= self->sample_frames) {
-				v->env_state         = ENV_RELEASE;
-				v->env_release_level = v->env_level;
+				/* Reached end of playback range */
+				if (v->oneshot) {
+					/* one-shot: after end, start release */
+					v->env_state         = ENV_RELEASE;
+					v->env_release_level = v->env_level;
+				} else {
+					v->env_state         = ENV_RELEASE;
+					v->env_release_level = v->env_level;
+				}
 				continue;
 			}
 			float sl, sr;
@@ -467,6 +569,7 @@ run (LV2_Handle instance, uint32_t n_samples)
 			R += sr * amp;
 			v->read_pos += 1.0;
 			if (v->read_pos >= v->read_end) {
+				/* Reached the user-defined End marker */
 				v->env_state         = ENV_RELEASE;
 				v->env_release_level = v->env_level;
 			}
@@ -484,7 +587,11 @@ run (LV2_Handle instance, uint32_t n_samples)
 }
 
 static void
-deactivate (LV2_Handle instance) { (void)instance; }
+deactivate (LV2_Handle instance)
+{
+	ASampler* self = (ASampler*)instance;
+	stop_all (self);
+}
 
 static void
 cleanup (LV2_Handle instance)
@@ -532,6 +639,8 @@ work (LV2_Handle                  instance,
 
 	sf_count_t got = sf_readf_float (sf, raw, info.frames);
 	sf_close (sf);
+
+	if (got <= 0) { free (raw); return LV2_WORKER_ERR_UNKNOWN; }
 
 	float* buf = (float*)malloc (sizeof (float) * n_ch * (uint32_t)got);
 	if (!buf) { free (raw); return LV2_WORKER_ERR_NO_SPACE; }
@@ -644,17 +753,18 @@ state_restore (LV2_Handle                  instance,
 /* ------------------------------------------------------------------ */
 /* LV2 Inline Display (Cairo waveform)                                  */
 /* ------------------------------------------------------------------ */
-#include <cairo/cairo.h>
 
 static LV2_Inline_Display_Image_Surface*
 render_inline (LV2_Handle instance, uint32_t w, uint32_t max_h)
 {
 	ASampler* self = (ASampler*)instance;
 
+	/* Always render at a fixed height so the widget stays visible for drops */
 	uint32_t h = w / 3;
-	if (h < 40)    h = 40;
+	if (h < 60)    h = 60;
 	if (h > max_h) h = max_h;
 
+	/* (Re)allocate surface if size changed */
 	if (!self->display
 	    || self->display->width  != (int)w
 	    || self->display->height != (int)h) {
@@ -672,15 +782,47 @@ render_inline (LV2_Handle instance, uint32_t w, uint32_t max_h)
 		self->display->data, CAIRO_FORMAT_ARGB32, (int)w, (int)h, (int)(4 * w));
 	cairo_t* cr = cairo_create (surface);
 
-	/* Background */
-	cairo_set_source_rgb (cr, 0.15, 0.15, 0.15);
-	cairo_paint (cr);
+	/* Background -- slightly darker gradient */
+	{
+		cairo_pattern_t* pat = cairo_pattern_create_linear (0, 0, 0, h);
+		cairo_pattern_add_color_stop_rgb (pat, 0.0, 0.18, 0.18, 0.18);
+		cairo_pattern_add_color_stop_rgb (pat, 1.0, 0.10, 0.10, 0.10);
+		cairo_set_source (cr, pat);
+		cairo_paint (cr);
+		cairo_pattern_destroy (pat);
+	}
 
 	if (!self->sample_data || self->sample_frames == 0) {
-		cairo_set_source_rgb (cr, 0.5, 0.5, 0.5);
-		cairo_set_font_size (cr, 11.0);
-		cairo_move_to (cr, 8, h / 2.0 + 4);
-		cairo_show_text (cr, "Drop audio file here");
+		/* Placeholder: dashed border + text */
+		cairo_set_source_rgba (cr, 0.55, 0.55, 0.55, 0.6);
+		double dash[] = { 4.0, 4.0 };
+		cairo_set_dash (cr, dash, 2, 0);
+		cairo_set_line_width (cr, 1.5);
+		cairo_rectangle (cr, 4, 4, w - 8, h - 8);
+		cairo_stroke (cr);
+		cairo_set_dash (cr, NULL, 0, 0);
+
+		/* Down-arrow icon */
+		cairo_set_source_rgba (cr, 0.6, 0.6, 0.6, 0.8);
+		double cx = w / 2.0;
+		double cy = h / 2.0 - 10;
+		cairo_move_to (cr, cx - 10, cy - 6);
+		cairo_line_to (cr, cx + 10, cy - 6);
+		cairo_line_to (cr, cx + 10, cy + 2);
+		cairo_line_to (cr, cx + 17, cy + 2);
+		cairo_line_to (cr, cx,      cy + 14);
+		cairo_line_to (cr, cx - 17, cy + 2);
+		cairo_line_to (cr, cx - 10, cy + 2);
+		cairo_close_path (cr);
+		cairo_fill (cr);
+
+		cairo_set_source_rgba (cr, 0.7, 0.7, 0.7, 0.9);
+		cairo_set_font_size (cr, 10.5);
+		cairo_text_extents_t te;
+		const char* label = "Drop audio file here";
+		cairo_text_extents (cr, label, &te);
+		cairo_move_to (cr, cx - te.width / 2.0 - te.x_bearing, h / 2.0 + 16);
+		cairo_show_text (cr, label);
 	} else {
 		float*   data  = self->sample_data;
 		uint32_t total = self->sample_frames;
@@ -689,19 +831,27 @@ render_inline (LV2_Handle instance, uint32_t w, uint32_t max_h)
 		float    en    = *self->p_end;
 		if (sn < 0.f) sn = 0.f;
 		if (en > 1.f) en = 1.f;
+		if (sn > en) { float t = sn; sn = en; en = t; }
 
 		/* Shade regions outside start..end */
-		cairo_set_source_rgba (cr, 0.05, 0.05, 0.05, 0.7);
-		cairo_rectangle (cr, 0, 0, (double)w * sn, h);
-		cairo_fill (cr);
-		cairo_rectangle (cr, (double)w * en, 0, (double)w * (1.f - en), h);
-		cairo_fill (cr);
+		cairo_set_source_rgba (cr, 0.0, 0.0, 0.0, 0.55);
+		if (sn > 0.f) {
+			cairo_rectangle (cr, 0, 0, (double)w * sn, h);
+			cairo_fill (cr);
+		}
+		if (en < 1.f) {
+			cairo_rectangle (cr, (double)w * en, 0, (double)w * (1.0 - en) + 1, h);
+			cairo_fill (cr);
+		}
 
-		/* Waveform */
-		cairo_set_source_rgb (cr, 0.2, 0.7, 0.3);
+		/* Waveform -- render as filled envelope (top and bottom) */
+		cairo_set_source_rgba (cr, 0.25, 0.75, 0.35, 0.9);
 		cairo_set_line_width (cr, 1.0);
 		double mid  = h / 2.0;
-		double gain = mid * 0.9;
+		double gain = mid * 0.88;
+
+		/* Build top path and bottom path simultaneously */
+		cairo_move_to (cr, 0.5, mid);
 		for (uint32_t x = 0; x < w; ++x) {
 			uint32_t i0 = (uint32_t)((double)x       / w * total);
 			uint32_t i1 = (uint32_t)((double)(x + 1) / w * total);
@@ -710,32 +860,53 @@ render_inline (LV2_Handle instance, uint32_t w, uint32_t max_h)
 			if (i1 > total) i1 = total;
 			float mn =  1.f, mx = -1.f;
 			for (uint32_t i = i0; i < i1; ++i) {
-				float s = (ch == 1) ? data[i] : 0.5f * (data[i*2] + data[i*2+1]);
+				float s = (ch == 1) ? data[i] : 0.5f * (data[i * 2] + data[i * 2 + 1]);
 				if (s < mn) mn = s;
 				if (s > mx) mx = s;
 			}
+			/* Vertical line for this column */
 			cairo_move_to (cr, x + 0.5, mid - mx * gain);
 			cairo_line_to (cr, x + 0.5, mid - mn * gain);
 		}
 		cairo_stroke (cr);
 
-		/* Start marker (green) */
-		cairo_set_source_rgb (cr, 0.3, 1.0, 0.3);
+		/* Center line */
+		cairo_set_source_rgba (cr, 0.3, 0.8, 0.4, 0.3);
+		cairo_set_line_width (cr, 0.5);
+		cairo_move_to (cr, 0, mid);
+		cairo_line_to (cr, w, mid);
+		cairo_stroke (cr);
+
+		/* Start marker (bright green) */
+		cairo_set_source_rgba (cr, 0.3, 1.0, 0.3, 0.9);
 		cairo_set_line_width (cr, 1.5);
 		cairo_move_to (cr, (double)w * sn, 0);
 		cairo_line_to (cr, (double)w * sn, h);
 		cairo_stroke (cr);
 
-		/* End marker (red) */
-		cairo_set_source_rgb (cr, 1.0, 0.3, 0.3);
+		/* End marker (bright red) */
+		cairo_set_source_rgba (cr, 1.0, 0.35, 0.35, 0.9);
+		cairo_set_line_width (cr, 1.5);
 		cairo_move_to (cr, (double)w * en, 0);
 		cairo_line_to (cr, (double)w * en, h);
 		cairo_stroke (cr);
+
+		/* Filename label (bottom-left, small) */
+		{
+			cairo_set_source_rgba (cr, 0.85, 0.85, 0.85, 0.7);
+			cairo_set_font_size (cr, 9.0);
+			/* Extract basename */
+			const char* slash = strrchr (self->current_path, '/');
+			const char* fname = slash ? slash + 1 : self->current_path;
+			cairo_move_to (cr, 5, h - 5);
+			cairo_show_text (cr, fname);
+		}
 	}
 
-	/* Border */
-	cairo_set_source_rgb (cr, 0.4, 0.4, 0.4);
+	/* Outer border */
+	cairo_set_source_rgba (cr, 0.45, 0.45, 0.45, 1.0);
 	cairo_set_line_width (cr, 1.0);
+	cairo_set_dash (cr, NULL, 0, 0);
 	cairo_rectangle (cr, 0.5, 0.5, w - 1, h - 1);
 	cairo_stroke (cr);
 
