@@ -277,48 +277,59 @@ cmp_str (const void* a, const void* b)
 }
 
 /* ------------------------------------------------------------------ */
-/* DSP helpers: TPT State-Variable Filter                              */
+/* DSP helpers: TPT State-Variable Filter (Cytomic/Andy Simper form)  */
 /* ------------------------------------------------------------------ */
 
-/* Run one sample through a TPT SVF highpass.
- * ic1eq / ic2eq are the two integrator state variables (persist between calls).
+/* Correct 2-pole TPT SVF.
+ * Reference: "Solving the Continuous SVF Equations Using Trapezoidal
+ *             Integration and Equivalent Circuits" — Andy Simper, 2013.
+ *
+ * k = sqrt(2) gives Butterworth (maximally flat) response.
  * g = tan(pi * freq / samplerate)
- * Returns the HP output. */
+ *
+ * Pre-computed coefficients (only need to be recalculated when g changes):
+ *   a1 = 1 / (1 + g * (g + k))
+ *   a2 = g * a1
+ *   a3 = g * a2
+ *
+ * Per-sample update:
+ *   v3 = x - ic2eq
+ *   v1 = a1*ic1eq + a2*v3
+ *   v2 = ic2eq + a2*ic1eq + a3*v3
+ *   ic1eq = 2*v1 - ic1eq
+ *   ic2eq = 2*v2 - ic2eq
+ *   hp = x - k*v1 - v2
+ *   lp = v2
+ */
+
+/* k = sqrt(2) for Butterworth */
+#define SVF_K 1.41421356237f
+
 static inline float
 svf_hp (float* ic1eq, float* ic2eq, float g, float x)
 {
-	/* Simpler 1-pole TPT form (k=1 Butterworth 2-pole SVF):
-	 *   v1  = (x - ic2eq - (1+g)*ic1eq) / (1 + g*(1+g))
-	 *   lp  = ic2eq + g * v1_new_integrated   (ic2eq after update)
-	 *   bp  = ic1eq after update
-	 *   hp  = x - bp - lp
-	 * Using the standard non-iterative formulation:
-	 */
-	float v0 = x;
-	float v3 = v0 - *ic2eq;
-	float v1 = *ic1eq + g * v3 / (1.f + g * (2.f + g));
-	float v2 = *ic2eq + g * (v1 - *ic1eq);
-	/* update state */
-	/* v1 is the bandpass, v2 is the lowpass */
-	float new_ic1 = 2.f * v1 - *ic1eq;
-	float new_ic2 = 2.f * v2 - *ic2eq;
-	*ic1eq = new_ic1;
-	*ic2eq = new_ic2;
-	return v0 - v2 - v1;  /* hp = input - lp - bp */
+	float a1 = 1.f / (1.f + g * (g + SVF_K));
+	float a2 = g * a1;
+	float a3 = g * a2;
+	float v3 = x - *ic2eq;
+	float v1 = a1 * *ic1eq + a2 * v3;
+	float v2 = *ic2eq + a2 * *ic1eq + a3 * v3;
+	*ic1eq = 2.f * v1 - *ic1eq;
+	*ic2eq = 2.f * v2 - *ic2eq;
+	return x - SVF_K * v1 - v2;  /* hp = x - k*bp - lp */
 }
 
-/* Run one sample through a TPT SVF lowpass. */
 static inline float
 svf_lp (float* ic1eq, float* ic2eq, float g, float x)
 {
-	float v0 = x;
-	float v3 = v0 - *ic2eq;
-	float v1 = *ic1eq + g * v3 / (1.f + g * (2.f + g));
-	float v2 = *ic2eq + g * (v1 - *ic1eq);
-	float new_ic1 = 2.f * v1 - *ic1eq;
-	float new_ic2 = 2.f * v2 - *ic2eq;
-	*ic1eq = new_ic1;
-	*ic2eq = new_ic2;
+	float a1 = 1.f / (1.f + g * (g + SVF_K));
+	float a2 = g * a1;
+	float a3 = g * a2;
+	float v3 = x - *ic2eq;
+	float v1 = a1 * *ic1eq + a2 * v3;
+	float v2 = *ic2eq + a2 * *ic1eq + a3 * v3;
+	*ic1eq = 2.f * v1 - *ic1eq;
+	*ic2eq = 2.f * v2 - *ic2eq;
 	return v2;  /* lp = v2 */
 }
 
