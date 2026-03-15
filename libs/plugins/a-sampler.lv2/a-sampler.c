@@ -19,6 +19,11 @@
  * Prev/Next Sample: trigger ports that browse the directory of the currently
  *   loaded file and load the adjacent audio file (alphabetically).
  *
+ * Gain: output gain slider in dB (-24 to +12).
+ * HP/LP: TPT state-variable highpass and lowpass filters.
+ * Distortion: drive + flavour selector (Off, Soft Clip, Hard Clip, Fold,
+ *   Bit Crush).
+ *
  * File loading uses the LV2 Worker extension so the RT thread is never blocked.
  * File path is communicated via patch:Set / patch:Get on the atom ports.
  * Path is saved / restored via LV2 State.
@@ -97,6 +102,11 @@ typedef enum {
 	AS_STOP        = 11,
 	AS_PREV_SAMPLE = 12,
 	AS_NEXT_SAMPLE = 13,
+	AS_GAIN        = 14,
+	AS_HP_FREQ     = 15,
+	AS_LP_FREQ     = 16,
+	AS_DIST_DRIVE  = 17,
+	AS_DIST_TYPE   = 18,
 } PortIndex;
 
 /* ------------------------------------------------------------------ */
@@ -173,6 +183,12 @@ typedef struct {
 	const float* p_stop;
 	const float* p_prev;
 	const float* p_next;
+	/* new FX ports */
+	const float* p_gain;
+	const float* p_hp_freq;
+	const float* p_lp_freq;
+	const float* p_dist_drive;
+	const float* p_dist_type;
 
 	/* features */
 	LV2_URID_Map*        map;
@@ -218,6 +234,12 @@ typedef struct {
 	float    prev_prev;
 	float    prev_next;
 
+	/* TPT SVF filter state (stereo: _l and _r) */
+	float    hp_ic1eq_l, hp_ic1eq_r;
+	float    hp_ic2eq_l, hp_ic2eq_r;
+	float    lp_ic1eq_l, lp_ic1eq_r;
+	float    lp_ic2eq_l, lp_ic2eq_r;
+
 	/* inline display */
 	LV2_Inline_Display_Image_Surface* display;
 	bool     need_expose;
@@ -252,6 +274,97 @@ cmp_str (const void* a, const void* b)
 	char* const* pa = (char* const*)a;
 	char* const* pb = (char* const*)b;
 	return strcmp (*pa, *pb);
+}
+
+/* ------------------------------------------------------------------ */
+/* DSP helpers: TPT State-Variable Filter                              */
+/* ------------------------------------------------------------------ */
+
+/* Run one sample through a TPT SVF highpass.
+ * ic1eq / ic2eq are the two integrator state variables (persist between calls).
+ * g = tan(pi * freq / samplerate)
+ * Returns the HP output. */
+static inline float
+svf_hp (float* ic1eq, float* ic2eq, float g, float x)
+{
+	/* Simpler 1-pole TPT form (k=1 Butterworth 2-pole SVF):
+	 *   v1  = (x - ic2eq - (1+g)*ic1eq) / (1 + g*(1+g))
+	 *   lp  = ic2eq + g * v1_new_integrated   (ic2eq after update)
+	 *   bp  = ic1eq after update
+	 *   hp  = x - bp - lp
+	 * Using the standard non-iterative formulation:
+	 */
+	float v0 = x;
+	float v3 = v0 - *ic2eq;
+	float v1 = *ic1eq + g * v3 / (1.f + g * (2.f + g));
+	float v2 = *ic2eq + g * (v1 - *ic1eq);
+	/* update state */
+	/* v1 is the bandpass, v2 is the lowpass */
+	float new_ic1 = 2.f * v1 - *ic1eq;
+	float new_ic2 = 2.f * v2 - *ic2eq;
+	*ic1eq = new_ic1;
+	*ic2eq = new_ic2;
+	return v0 - v2 - v1;  /* hp = input - lp - bp */
+}
+
+/* Run one sample through a TPT SVF lowpass. */
+static inline float
+svf_lp (float* ic1eq, float* ic2eq, float g, float x)
+{
+	float v0 = x;
+	float v3 = v0 - *ic2eq;
+	float v1 = *ic1eq + g * v3 / (1.f + g * (2.f + g));
+	float v2 = *ic2eq + g * (v1 - *ic1eq);
+	float new_ic1 = 2.f * v1 - *ic1eq;
+	float new_ic2 = 2.f * v2 - *ic2eq;
+	*ic1eq = new_ic1;
+	*ic2eq = new_ic2;
+	return v2;  /* lp = v2 */
+}
+
+/* ------------------------------------------------------------------ */
+/* DSP helpers: Distortion                                             */
+/* ------------------------------------------------------------------ */
+
+/* Soft clip: tanh saturation (type 1) */
+static inline float
+dist_soft_clip (float x, float drive)
+{
+	float d = 1.f + drive * 15.f;   /* 1x to 16x */
+	float denom = tanhf (d);
+	if (denom < 1e-9f) denom = 1e-9f;
+	return tanhf (x * d) / denom;
+}
+
+/* Hard clip (type 2) */
+static inline float
+dist_hard_clip (float x, float drive)
+{
+	float thresh = 1.f - drive * 0.85f;  /* 1.0 down to 0.15 */
+	if (thresh < 0.01f) thresh = 0.01f;
+	float out = x;
+	if (out >  thresh) out =  thresh;
+	if (out < -thresh) out = -thresh;
+	return out / thresh;  /* normalise back to ~[-1,1] */
+}
+
+/* Wavefold (type 3): sin-based fold */
+static inline float
+dist_fold (float x, float drive)
+{
+	float d = 1.f + drive * 5.f;   /* 1x to 6x */
+	return sinf (x * d * (float)M_PI);
+}
+
+/* Bit crush (type 4): quantise */
+static inline float
+dist_bitcrush (float x, float drive)
+{
+	/* drive=0 -> 16384 steps (basically transparent)
+	 * drive=1 -> 4 steps    (very harsh)                */
+	float steps = powf (2.f, 14.f - drive * 12.f);
+	if (steps < 1.f) steps = 1.f;
+	return floorf (x * steps + 0.5f) / steps;
 }
 
 /* ------------------------------------------------------------------ */
@@ -490,20 +603,25 @@ connect_port (LV2_Handle instance, uint32_t port, void* data)
 {
 	ASampler* self = (ASampler*)instance;
 	switch ((PortIndex)port) {
-	case AS_CONTROL:     self->control   = (const LV2_Atom_Sequence*)data; break;
-	case AS_NOTIFY:      self->notify    = (LV2_Atom_Sequence*)data;       break;
-	case AS_OUT_L:       self->out_l     = (float*)data;                   break;
-	case AS_OUT_R:       self->out_r     = (float*)data;                   break;
-	case AS_START:       self->p_start   = (const float*)data;             break;
-	case AS_END:         self->p_end     = (const float*)data;             break;
-	case AS_ATTACK:      self->p_attack  = (const float*)data;             break;
-	case AS_DECAY:       self->p_decay   = (const float*)data;             break;
-	case AS_SUSTAIN:     self->p_sustain = (const float*)data;             break;
-	case AS_RELEASE:     self->p_release = (const float*)data;             break;
-	case AS_GATE:        self->p_gate    = (const float*)data;             break;
-	case AS_STOP:        self->p_stop    = (const float*)data;             break;
-	case AS_PREV_SAMPLE: self->p_prev    = (const float*)data;             break;
-	case AS_NEXT_SAMPLE: self->p_next    = (const float*)data;             break;
+	case AS_CONTROL:     self->control      = (const LV2_Atom_Sequence*)data; break;
+	case AS_NOTIFY:      self->notify       = (LV2_Atom_Sequence*)data;       break;
+	case AS_OUT_L:       self->out_l        = (float*)data;                   break;
+	case AS_OUT_R:       self->out_r        = (float*)data;                   break;
+	case AS_START:       self->p_start      = (const float*)data;             break;
+	case AS_END:         self->p_end        = (const float*)data;             break;
+	case AS_ATTACK:      self->p_attack     = (const float*)data;             break;
+	case AS_DECAY:       self->p_decay      = (const float*)data;             break;
+	case AS_SUSTAIN:     self->p_sustain    = (const float*)data;             break;
+	case AS_RELEASE:     self->p_release    = (const float*)data;             break;
+	case AS_GATE:        self->p_gate       = (const float*)data;             break;
+	case AS_STOP:        self->p_stop       = (const float*)data;             break;
+	case AS_PREV_SAMPLE: self->p_prev       = (const float*)data;             break;
+	case AS_NEXT_SAMPLE: self->p_next       = (const float*)data;             break;
+	case AS_GAIN:        self->p_gain       = (const float*)data;             break;
+	case AS_HP_FREQ:     self->p_hp_freq    = (const float*)data;             break;
+	case AS_LP_FREQ:     self->p_lp_freq    = (const float*)data;             break;
+	case AS_DIST_DRIVE:  self->p_dist_drive = (const float*)data;             break;
+	case AS_DIST_TYPE:   self->p_dist_type  = (const float*)data;             break;
 	}
 }
 
@@ -516,6 +634,11 @@ activate (LV2_Handle instance)
 	self->prev_stop  = 0.f;
 	self->prev_prev  = 0.f;
 	self->prev_next  = 0.f;
+	/* Zero SVF filter state */
+	self->hp_ic1eq_l = self->hp_ic1eq_r = 0.f;
+	self->hp_ic2eq_l = self->hp_ic2eq_r = 0.f;
+	self->lp_ic1eq_l = self->lp_ic1eq_r = 0.f;
+	self->lp_ic2eq_l = self->lp_ic2eq_r = 0.f;
 }
 
 static void
@@ -661,6 +784,79 @@ run (LV2_Handle instance, uint32_t n_samples)
 		}
 		self->out_l[s] = L;
 		self->out_r[s] = R;
+	}
+
+	/* ----------------------------------------------------------------
+	 * FX chain: gain -> HP filter -> LP filter -> distortion
+	 * ---------------------------------------------------------------- */
+
+	/* 1. Gain */
+	if (self->p_gain) {
+		float gain_lin = powf (10.f, (*self->p_gain) / 20.f);
+		for (uint32_t s = 0; s < n_samples; ++s) {
+			self->out_l[s] *= gain_lin;
+			self->out_r[s] *= gain_lin;
+		}
+	}
+
+	/* 2. Highpass filter */
+	if (self->p_hp_freq) {
+		float hp_freq = *self->p_hp_freq;
+		/* Only apply when meaningfully above 20 Hz floor */
+		if (hp_freq > 21.f) {
+			float g = tanf ((float)M_PI * hp_freq / (float)self->sample_rate);
+			for (uint32_t s = 0; s < n_samples; ++s) {
+				self->out_l[s] = svf_hp (&self->hp_ic1eq_l, &self->hp_ic2eq_l, g, self->out_l[s]);
+				self->out_r[s] = svf_hp (&self->hp_ic1eq_r, &self->hp_ic2eq_r, g, self->out_r[s]);
+			}
+		}
+	}
+
+	/* 3. Lowpass filter */
+	if (self->p_lp_freq) {
+		float lp_freq = *self->p_lp_freq;
+		/* Only apply when meaningfully below 20 kHz ceiling */
+		if (lp_freq < 19999.f) {
+			float g = tanf ((float)M_PI * lp_freq / (float)self->sample_rate);
+			for (uint32_t s = 0; s < n_samples; ++s) {
+				self->out_l[s] = svf_lp (&self->lp_ic1eq_l, &self->lp_ic2eq_l, g, self->out_l[s]);
+				self->out_r[s] = svf_lp (&self->lp_ic1eq_r, &self->lp_ic2eq_r, g, self->out_r[s]);
+			}
+		}
+	}
+
+	/* 4. Distortion */
+	if (self->p_dist_drive && self->p_dist_type) {
+		float drive = *self->p_dist_drive;
+		int   dtype = (int)(*self->p_dist_type + 0.5f);
+		if (dtype != 0 && drive > 0.001f) {
+			for (uint32_t s = 0; s < n_samples; ++s) {
+				float l = self->out_l[s];
+				float r = self->out_r[s];
+				switch (dtype) {
+				case 1: /* Soft Clip */
+					l = dist_soft_clip (l, drive);
+					r = dist_soft_clip (r, drive);
+					break;
+				case 2: /* Hard Clip */
+					l = dist_hard_clip (l, drive);
+					r = dist_hard_clip (r, drive);
+					break;
+				case 3: /* Fold */
+					l = dist_fold (l, drive);
+					r = dist_fold (r, drive);
+					break;
+				case 4: /* Bit Crush */
+					l = dist_bitcrush (l, drive);
+					r = dist_bitcrush (r, drive);
+					break;
+				default:
+					break;
+				}
+				self->out_l[s] = l;
+				self->out_r[s] = r;
+			}
+		}
 	}
 
 	lv2_atom_forge_pop (&self->forge, &self->forge_frame);
