@@ -1,5 +1,5 @@
 /*
- * a-sampler.lv2 — ACE One-Shot Sampler
+ * a-sampler.lv2 -- ACE One-Shot Sampler
  *
  * Copyright (C) 2024 Ardour Community
  *
@@ -12,7 +12,7 @@
  * an ADSR amplitude envelope.  Note-off begins the release phase.
  *
  * File loading uses the LV2 Worker extension so the RT thread is never blocked.
- * The host drives file selection via patch:Set (Variant::PATH) — this is what
+ * The host drives file selection via patch:Set (Variant::PATH) -- this is what
  * Ardour calls when a file is dropped onto the inline display or selected via
  * the generic UI file button.
  * The file path is saved / restored via LV2 State.
@@ -61,7 +61,6 @@
 #define ASAMPLER_URI      "https://ardour.org/plugins/a-sampler"
 #define ASAMPLER_FILE_URI "urn:ardour:a-sampler:sampleFile"
 
-/* Use lv2_atom_forge_object on newer LV2, blank on older */
 #ifdef LV2_ATOM__Object
 #define x_forge_object lv2_atom_forge_object
 #else
@@ -72,27 +71,27 @@
 /* Port indices  (must match a-sampler.ttl.in exactly)                 */
 /* ------------------------------------------------------------------ */
 typedef enum {
-AS_CONTROL = 0,   /* atom:Sequence input  — MIDI + patch messages */
-AS_NOTIFY  = 1,   /* atom:Sequence output — patch:Set replies      */
-AS_OUT_L   = 2,
-AS_OUT_R   = 3,
-AS_START   = 4,
-AS_END     = 5,
-AS_ATTACK  = 6,
-AS_DECAY   = 7,
-AS_SUSTAIN = 8,
-AS_RELEASE = 9,
+	AS_CONTROL = 0,
+	AS_NOTIFY  = 1,
+	AS_OUT_L   = 2,
+	AS_OUT_R   = 3,
+	AS_START   = 4,
+	AS_END     = 5,
+	AS_ATTACK  = 6,
+	AS_DECAY   = 7,
+	AS_SUSTAIN = 8,
+	AS_RELEASE = 9,
 } PortIndex;
 
 /* ------------------------------------------------------------------ */
 /* ADSR                                                                 */
 /* ------------------------------------------------------------------ */
 typedef enum {
-ENV_IDLE    = 0,
-ENV_ATTACK  = 1,
-ENV_DECAY   = 2,
-ENV_SUSTAIN = 3,
-ENV_RELEASE = 4,
+	ENV_IDLE    = 0,
+	ENV_ATTACK  = 1,
+	ENV_DECAY   = 2,
+	ENV_SUSTAIN = 3,
+	ENV_RELEASE = 4,
 } EnvState;
 
 /* ------------------------------------------------------------------ */
@@ -101,13 +100,13 @@ ENV_RELEASE = 4,
 #define MAX_VOICES 32
 
 typedef struct {
-int      active;
-double   read_pos;
-double   read_end;
-float    velocity;
-EnvState env_state;
-double   env_level;
-double   env_release_level;
+	int      active;
+	double   read_pos;
+	double   read_end;
+	float    velocity;
+	EnvState env_state;
+	double   env_level;
+	double   env_release_level;
 } Voice;
 
 /* ------------------------------------------------------------------ */
@@ -117,74 +116,74 @@ double   env_release_level;
 #define MSG_FILE_READY 2
 
 typedef struct {
-int  type;
-char path[4096];
+	int  type;
+	char path[4096];
 } MsgLoad;
 
 typedef struct {
-int      type;
-float*   data;
-uint32_t n_frames;
-uint32_t n_channels;
+	int      type;
+	float*   data;
+	uint32_t n_frames;
+	uint32_t n_channels;
 } MsgReady;
 
 /* ------------------------------------------------------------------ */
 /* Plugin instance                                                      */
 /* ------------------------------------------------------------------ */
 typedef struct {
-/* ports */
-const LV2_Atom_Sequence* control;
-LV2_Atom_Sequence*       notify;
-float*       out_l;
-float*       out_r;
-const float* p_start;
-const float* p_end;
-const float* p_attack;
-const float* p_decay;
-const float* p_sustain;
-const float* p_release;
+	/* ports */
+	const LV2_Atom_Sequence* control;
+	LV2_Atom_Sequence*       notify;
+	float*       out_l;
+	float*       out_r;
+	const float* p_start;
+	const float* p_end;
+	const float* p_attack;
+	const float* p_decay;
+	const float* p_sustain;
+	const float* p_release;
 
-/* features */
-LV2_URID_Map*        map;
-LV2_Worker_Schedule* schedule;
-LV2_Log_Logger       logger;
-LV2_Inline_Display*  queue_draw;
+	/* features */
+	LV2_URID_Map*        map;
+	LV2_Worker_Schedule* schedule;
+	LV2_Log_Logger       logger;
+	LV2_Inline_Display*  queue_draw;
 
-/* forge (for notify port) */
-LV2_Atom_Forge       forge;
-LV2_Atom_Forge_Frame forge_frame;
+	/* forge (for notify port) */
+	LV2_Atom_Forge       forge;
+	LV2_Atom_Forge_Frame forge_frame;
 
-/* URIDs */
-LV2_URID atom_Blank;
-LV2_URID atom_Object;
-LV2_URID atom_Path;
-LV2_URID atom_URID;
-LV2_URID midi_MidiEvent;
-LV2_URID patch_Get;
-LV2_URID patch_Set;
-LV2_URID patch_property;
-LV2_URID patch_value;
-LV2_URID as_sample_file;  /* urn:ardour:a-sampler:sampleFile */
+	/* URIDs */
+	LV2_URID atom_Blank;
+	LV2_URID atom_Object;
+	LV2_URID atom_Path;
+	LV2_URID atom_URID;
+	LV2_URID midi_MidiEvent;
+	LV2_URID patch_Get;
+	LV2_URID patch_Set;
+	LV2_URID patch_property;
+	LV2_URID patch_value;
+	LV2_URID as_sample_file;
 
-/* sample (RT double-buffer via worker) */
-float*   sample_data;
-uint32_t sample_frames;
-uint32_t sample_channels;
-float*   pending_data;
-uint32_t pending_frames;
-uint32_t pending_channels;
+	/* sample (RT double-buffer via worker) */
+	float*   sample_data;
+	uint32_t sample_frames;
+	uint32_t sample_channels;
+	float*   pending_data;
+	uint32_t pending_frames;
+	uint32_t pending_channels;
 
-/* voices */
-Voice    voices[MAX_VOICES];
+	/* voices */
+	Voice    voices[MAX_VOICES];
 
-/* host state */
-double   sample_rate;
-char     current_path[4096];
-bool     inform_ui;          /* send patch:Set reply next cycle */
+	/* host state */
+	double   sample_rate;
+	char     current_path[4096];
+	bool     inform_ui;
 
-/* inline display */
-LV2_Inline_Display_Image_Surface* display;
-bool     need_expose;
+	/* inline display */
+	LV2_Inline_Display_Image_Surface* display;
+	bool     need_expose;
 } ASampler;
 
 /* ------------------------------------------------------------------ */
@@ -194,101 +193,111 @@ bool     need_expose;
 static Voice*
 find_free_voice (ASampler* self)
 {
-for (int i = 0; i < MAX_VOICES; ++i) {
-(!self->voices[i].active) return &self->voices[i];
-}
-return &self->voices[0]; /* steal first */
+	for (int i = 0; i < MAX_VOICES; ++i) {
+		if (!self->voices[i].active) return &self->voices[i];
+	}
+	return &self->voices[0]; /* steal first */
 }
 
 static void
 note_on (ASampler* self, int vel)
 {
-if (!self->sample_data || self->sample_frames == 0) return;
+	if (!self->sample_data || self->sample_frames == 0) return;
 
-Voice* v       = find_free_voice (self);
-v->active      = 1;
-v->velocity    = vel / 127.0f;
-v->env_state   = ENV_ATTACK;
-v->env_level   = 0.0;
+	Voice* v     = find_free_voice (self);
+	v->active    = 1;
+	v->velocity  = vel / 127.0f;
+	v->env_state = ENV_ATTACK;
+	v->env_level = 0.0;
 
-float s = *self->p_start;
-float e = *self->p_end;
-if (s < 0.f) s = 0.f;
-if (e > 1.f) e = 1.f;
-if (s > e) { float t = s; s = e; e = t; }
+	float s = *self->p_start;
+	float e = *self->p_end;
+	if (s < 0.f) s = 0.f;
+	if (e > 1.f) e = 1.f;
+	if (s > e) { float t = s; s = e; e = t; }
 
-v->read_pos = s * (double)(self->sample_frames - 1);
-v->read_end = e * (double)(self->sample_frames - 1);
+	v->read_pos = s * (double)(self->sample_frames - 1);
+	v->read_end = e * (double)(self->sample_frames - 1);
 }
 
 static void
 note_off_all (ASampler* self)
 {
-for (int i = 0; i < MAX_VOICES; ++i) {
-v = &self->voices[i];
-(v->active && v->env_state != ENV_RELEASE && v->env_state != ENV_IDLE) {
-v_state         = ENV_RELEASE;
-v_release_level = v->env_level;
+	for (int i = 0; i < MAX_VOICES; ++i) {
+		Voice* v = &self->voices[i];
+		if (v->active && v->env_state != ENV_RELEASE && v->env_state != ENV_IDLE) {
+			v->env_state         = ENV_RELEASE;
+			v->env_release_level = v->env_level;
+		}
+	}
+}
+
 static float
 adsr_tick (ASampler* self, Voice* v)
 {
-double sr = self->sample_rate;
-float  A  = *self->p_attack;
-float  D  = *self->p_decay;
-float  S  = *self->p_sustain;
-float  R  = *self->p_release;
-if (A < 1e-6f) A = 1e-6f;
-if (D < 1e-6f) D = 1e-6f;
-if (R < 1e-6f) R = 1e-6f;
+	double sr = self->sample_rate;
+	float  A  = *self->p_attack;
+	float  D  = *self->p_decay;
+	float  S  = *self->p_sustain;
+	float  R  = *self->p_release;
+	if (A < 1e-6f) A = 1e-6f;
+	if (D < 1e-6f) D = 1e-6f;
+	if (R < 1e-6f) R = 1e-6f;
 
-switch (v->env_state) {
-case ENV_ATTACK:
-v_level += 1.0 / (A * sr);
-(v->env_level >= 1.0) { v->env_level = 1.0; v->env_state = ENV_DECAY; }
-ENV_DECAY:
-v_level -= (1.0 - S) / (D * sr);
-(v->env_level <= (double)S) { v->env_level = S; v->env_state = ENV_SUSTAIN; }
-ENV_SUSTAIN:
-v_level = S;
-ENV_RELEASE:
-v_level -= v->env_release_level / (R * sr);
-(v->env_level <= 0.0) { v->env_level = 0.0; v->env_state = ENV_IDLE; v->active = 0; }
-ENV_IDLE:
- 0.0f;
-}
-return (float)v->env_level * v->velocity;
+	switch (v->env_state) {
+	case ENV_ATTACK:
+		v->env_level += 1.0 / (A * sr);
+		if (v->env_level >= 1.0) { v->env_level = 1.0; v->env_state = ENV_DECAY; }
+		break;
+	case ENV_DECAY:
+		v->env_level -= (1.0 - S) / (D * sr);
+		if (v->env_level <= (double)S) { v->env_level = S; v->env_state = ENV_SUSTAIN; }
+		break;
+	case ENV_SUSTAIN:
+		v->env_level = S;
+		break;
+	case ENV_RELEASE:
+		v->env_level -= v->env_release_level / (R * sr);
+		if (v->env_level <= 0.0) {
+			v->env_level = 0.0;
+			v->env_state = ENV_IDLE;
+			v->active    = 0;
+		}
+		break;
+	case ENV_IDLE:
+		return 0.0f;
+	}
+	return (float)v->env_level * v->velocity;
 }
 
-/* Send patch:Set with current file path on the notify port */
 static void
 inform_ui (ASampler* self)
 {
-if (self->current_path[0] == '\0') return;
-LV2_Atom_Forge_Frame frame;
-lv2_atom_forge_frame_time (&self->forge, 0);
-x_forge_object (&self->forge, &frame, 1, self->patch_Set);
-lv2_atom_forge_key (&self->forge, self->patch_property);
-lv2_atom_forge_urid (&self->forge, self->as_sample_file);
-lv2_atom_forge_key (&self->forge, self->patch_value);
-lv2_atom_forge_path (&self->forge, self->current_path, strlen (self->current_path));
-lv2_atom_forge_pop (&self->forge, &frame);
+	if (self->current_path[0] == '\0') return;
+	LV2_Atom_Forge_Frame frame;
+	lv2_atom_forge_frame_time (&self->forge, 0);
+	x_forge_object (&self->forge, &frame, 1, self->patch_Set);
+	lv2_atom_forge_key (&self->forge, self->patch_property);
+	lv2_atom_forge_urid (&self->forge, self->as_sample_file);
+	lv2_atom_forge_key (&self->forge, self->patch_value);
+	lv2_atom_forge_path (&self->forge, self->current_path, strlen (self->current_path));
+	lv2_atom_forge_pop (&self->forge, &frame);
 }
 
-/* Parse an incoming patch:Set object; return the atom:Path value or NULL */
 static const LV2_Atom*
 parse_patch_set (ASampler* self, const LV2_Atom_Object* obj)
 {
-if (obj->body.otype != self->patch_Set) return NULL;
+	if (obj->body.otype != self->patch_Set) return NULL;
 
-const LV2_Atom* property = NULL;
-const LV2_Atom* value    = NULL;
-lv2_atom_object_get (obj, self->patch_property, &property, 0);
-if (!property || property->type != self->atom_URID) return NULL;
-if (((const LV2_Atom_URID*)property)->body != self->as_sample_file) return NULL;
+	const LV2_Atom* property = NULL;
+	const LV2_Atom* value    = NULL;
+	lv2_atom_object_get (obj, self->patch_property, &property, 0);
+	if (!property || property->type != self->atom_URID) return NULL;
+	if (((const LV2_Atom_URID*)property)->body != self->as_sample_file) return NULL;
 
-lv2_atom_object_get (obj, self->patch_value, &value, 0);
-if (!value || value->type != self->atom_Path) return NULL;
-return value;
+	lv2_atom_object_get (obj, self->patch_value, &value, 0);
+	if (!value || value->type != self->atom_Path) return NULL;
+	return value;
 }
 
 /* ------------------------------------------------------------------ */
@@ -301,169 +310,177 @@ instantiate (const LV2_Descriptor*     descriptor,
              const char*               bundle_path,
              const LV2_Feature* const* features)
 {
-(void)descriptor; (void)bundle_path;
+	(void)descriptor; (void)bundle_path;
 
-ASampler* self = (ASampler*)calloc (1, sizeof (ASampler));
-if (!self) return NULL;
-self->sample_rate = rate;
+	ASampler* self = (ASampler*)calloc (1, sizeof (ASampler));
+	if (!self) return NULL;
+	self->sample_rate = rate;
 
-for (int i = 0; features[i]; ++i) {
-(!strcmp (features[i]->URI, LV2_URID__map))
-= (LV2_URID_Map*)features[i]->data;
-if (!strcmp (features[i]->URI, LV2_WORKER__schedule))
-= (LV2_Worker_Schedule*)features[i]->data;
-if (!strcmp (features[i]->URI, LV2_LOG__log))
-it (&self->logger, self->map, (LV2_Log_Log*)features[i]->data);
-if (!strcmp (features[i]->URI, LV2_INLINEDISPLAY__queue_draw))
-ueue_draw = (LV2_Inline_Display*)features[i]->data;
-}
+	for (int i = 0; features[i]; ++i) {
+		if (!strcmp (features[i]->URI, LV2_URID__map))
+			self->map = (LV2_URID_Map*)features[i]->data;
+		else if (!strcmp (features[i]->URI, LV2_WORKER__schedule))
+			self->schedule = (LV2_Worker_Schedule*)features[i]->data;
+		else if (!strcmp (features[i]->URI, LV2_LOG__log))
+			lv2_log_logger_init (&self->logger, self->map, (LV2_Log_Log*)features[i]->data);
+		else if (!strcmp (features[i]->URI, LV2_INLINEDISPLAY__queue_draw))
+			self->queue_draw = (LV2_Inline_Display*)features[i]->data;
+	}
 
-if (!self->map || !self->schedule) {
-tf (stderr, "a-sampler: missing required features\n");
-(self);
- NULL;
-}
+	if (!self->map || !self->schedule) {
+		fprintf (stderr, "a-sampler: missing required features\n");
+		free (self);
+		return NULL;
+	}
 
-LV2_URID_Map* map = self->map;
-self->atom_Blank      = map->map (map->handle, LV2_ATOM__Blank);
-self->atom_Object     = map->map (map->handle, LV2_ATOM__Object);
-self->atom_Path       = map->map (map->handle, LV2_ATOM__Path);
-self->atom_URID       = map->map (map->handle, LV2_ATOM__URID);
-self->midi_MidiEvent  = map->map (map->handle, LV2_MIDI__MidiEvent);
-self->patch_Get       = map->map (map->handle, LV2_PATCH__Get);
-self->patch_Set       = map->map (map->handle, LV2_PATCH__Set);
-self->patch_property  = map->map (map->handle, LV2_PATCH__property);
-self->patch_value     = map->map (map->handle, LV2_PATCH__value);
-self->as_sample_file  = map->map (map->handle, ASAMPLER_FILE_URI);
+	LV2_URID_Map* map = self->map;
+	self->atom_Blank     = map->map (map->handle, LV2_ATOM__Blank);
+	self->atom_Object    = map->map (map->handle, LV2_ATOM__Object);
+	self->atom_Path      = map->map (map->handle, LV2_ATOM__Path);
+	self->atom_URID      = map->map (map->handle, LV2_ATOM__URID);
+	self->midi_MidiEvent = map->map (map->handle, LV2_MIDI__MidiEvent);
+	self->patch_Get      = map->map (map->handle, LV2_PATCH__Get);
+	self->patch_Set      = map->map (map->handle, LV2_PATCH__Set);
+	self->patch_property = map->map (map->handle, LV2_PATCH__property);
+	self->patch_value    = map->map (map->handle, LV2_PATCH__value);
+	self->as_sample_file = map->map (map->handle, ASAMPLER_FILE_URI);
 
-lv2_atom_forge_init (&self->forge, map);
-
-return (LV2_Handle)self;
+	lv2_atom_forge_init (&self->forge, map);
+	return (LV2_Handle)self;
 }
 
 static void
 connect_port (LV2_Handle instance, uint32_t port, void* data)
 {
-ASampler* self = (ASampler*)instance;
-switch ((PortIndex)port) {
-case AS_CONTROL: self->control   = (const LV2_Atom_Sequence*)data; break;
-case AS_NOTIFY:  self->notify    = (LV2_Atom_Sequence*)data;       break;
-case AS_OUT_L:   self->out_l     = (float*)data;                   break;
-case AS_OUT_R:   self->out_r     = (float*)data;                   break;
-case AS_START:   self->p_start   = (const float*)data;             break;
-case AS_END:     self->p_end     = (const float*)data;             break;
-case AS_ATTACK:  self->p_attack  = (const float*)data;             break;
-case AS_DECAY:   self->p_decay   = (const float*)data;             break;
-case AS_SUSTAIN: self->p_sustain = (const float*)data;             break;
-case AS_RELEASE: self->p_release = (const float*)data;             break;
-}
+	ASampler* self = (ASampler*)instance;
+	switch ((PortIndex)port) {
+	case AS_CONTROL: self->control   = (const LV2_Atom_Sequence*)data; break;
+	case AS_NOTIFY:  self->notify    = (LV2_Atom_Sequence*)data;       break;
+	case AS_OUT_L:   self->out_l     = (float*)data;                   break;
+	case AS_OUT_R:   self->out_r     = (float*)data;                   break;
+	case AS_START:   self->p_start   = (const float*)data;             break;
+	case AS_END:     self->p_end     = (const float*)data;             break;
+	case AS_ATTACK:  self->p_attack  = (const float*)data;             break;
+	case AS_DECAY:   self->p_decay   = (const float*)data;             break;
+	case AS_SUSTAIN: self->p_sustain = (const float*)data;             break;
+	case AS_RELEASE: self->p_release = (const float*)data;             break;
+	}
 }
 
 static void
 activate (LV2_Handle instance)
 {
-ASampler* self = (ASampler*)instance;
-memset (self->voices, 0, sizeof (self->voices));
-self->inform_ui = true;  /* send state to UI on first cycle */
+	ASampler* self = (ASampler*)instance;
+	memset (self->voices, 0, sizeof (self->voices));
+	self->inform_ui = true;
 }
 
 static void
 run (LV2_Handle instance, uint32_t n_samples)
 {
-ASampler* self = (ASampler*)instance;
+	ASampler* self = (ASampler*)instance;
 
-/* Swap in any freshly-loaded sample buffer from worker */
-if (self->pending_data) {
-(self->sample_data);
-    = self->pending_data;
-  = self->pending_frames;
-nels = self->pending_channels;
-ding_data    = NULL;
-(self->voices, 0, sizeof (self->voices));
-form_ui  = true;
-eed_expose = true;
-}
+	/* Swap in freshly-loaded sample buffer from worker */
+	if (self->pending_data) {
+		free (self->sample_data);
+		self->sample_data     = self->pending_data;
+		self->sample_frames   = self->pending_frames;
+		self->sample_channels = self->pending_channels;
+		self->pending_data    = NULL;
+		memset (self->voices, 0, sizeof (self->voices));
+		self->inform_ui   = true;
+		self->need_expose = true;
+	}
 
-/* Set up notify forge */
-const uint32_t capacity = self->notify->atom.size;
-lv2_atom_forge_set_buffer (&self->forge, (uint8_t*)self->notify, capacity);
-lv2_atom_forge_sequence_head (&self->forge, &self->forge_frame, 0);
+	/* Set up notify forge */
+	const uint32_t capacity = self->notify->atom.size;
+	lv2_atom_forge_set_buffer (&self->forge, (uint8_t*)self->notify, capacity);
+	lv2_atom_forge_sequence_head (&self->forge, &self->forge_frame, 0);
 
-/* Reply to UI with current file path if needed */
-if (self->inform_ui) {
-form_ui = false;
-form_ui (self);
-}
+	/* Reply to UI with current file path if needed */
+	if (self->inform_ui) {
+		self->inform_ui = false;
+		inform_ui (self);
+	}
 
-/* Clear audio output */
-memset (self->out_l, 0, n_samples * sizeof (float));
-memset (self->out_r, 0, n_samples * sizeof (float));
+	/* Clear audio output */
+	memset (self->out_l, 0, n_samples * sizeof (float));
+	memset (self->out_r, 0, n_samples * sizeof (float));
 
-/* Process incoming control/MIDI events */
-LV2_ATOM_SEQUENCE_FOREACH (self->control, ev) {
-st LV2_Atom_Object* obj = (const LV2_Atom_Object*)&ev->body;
+	/* Process incoming control / MIDI events */
+	LV2_ATOM_SEQUENCE_FOREACH (self->control, ev) {
+		const LV2_Atom_Object* obj = (const LV2_Atom_Object*)&ev->body;
 
-(ev->body.type == self->atom_Blank ||
-   ev->body.type == self->atom_Object) {
-(obj->body.otype == self->patch_Get) {
-form_ui (self);
-else if (obj->body.otype == self->patch_Set) {
-st LV2_Atom* file_path = parse_patch_set (self, obj);
-(file_path) {
-st char* fn = (const char*)(file_path + 1);
-cpy (self->current_path, fn, sizeof (self->current_path) - 1);
-t_path[sizeof (self->current_path) - 1] = '\0';
-msg;
-pe = MSG_LOAD_FILE;
-cpy (msg.path, self->current_path, sizeof (msg.path) - 1);
-(msg.path) - 1] = '\0';
-(self->schedule->handle, sizeof (msg), &msg);
-else if (ev->body.type == self->midi_MidiEvent) {
-st uint8_t* midi = (const uint8_t*)(ev + 1);
-t8_t        type = midi[0] & 0xf0;
-(type == 0x90 && midi[2] > 0) {
-ote_on (self, midi[2]);
-else if (type == 0x80 || (type == 0x90 && midi[2] == 0)) {
-ote_off_all (self);
-else if (type == 0xb0 && midi[1] == 123) {
-ote_off_all (self);
-Synthesise voices */
-for (uint32_t s = 0; s < n_samples; ++s) {
-L = 0.f, R = 0.f;
-(int vi = 0; vi < MAX_VOICES; ++vi) {
-v = &self->voices[vi];
-(!v->active) continue;
-amp = adsr_tick (self, v);
-(!v->active || !self->sample_data) continue;
+		if (ev->body.type == self->atom_Blank ||
+		    ev->body.type == self->atom_Object) {
+			if (obj->body.otype == self->patch_Get) {
+				inform_ui (self);
+			} else if (obj->body.otype == self->patch_Set) {
+				const LV2_Atom* file_path = parse_patch_set (self, obj);
+				if (file_path) {
+					const char* fn = (const char*)(file_path + 1);
+					strncpy (self->current_path, fn, sizeof (self->current_path) - 1);
+					self->current_path[sizeof (self->current_path) - 1] = '\0';
+					MsgLoad msg;
+					msg.type = MSG_LOAD_FILE;
+					strncpy (msg.path, self->current_path, sizeof (msg.path) - 1);
+					msg.path[sizeof (msg.path) - 1] = '\0';
+					self->schedule->schedule_work (self->schedule->handle, sizeof (msg), &msg);
+				}
+			}
+		} else if (ev->body.type == self->midi_MidiEvent) {
+			const uint8_t* midi = (const uint8_t*)(ev + 1);
+			uint8_t        type = midi[0] & 0xf0;
+			if (type == 0x90 && midi[2] > 0) {
+				note_on (self, midi[2]);
+			} else if (type == 0x80 || (type == 0x90 && midi[2] == 0)) {
+				note_off_all (self);
+			} else if (type == 0xb0 && midi[1] == 123) {
+				note_off_all (self);
+			}
+		}
+	}
 
-t32_t pos = (uint32_t)v->read_pos;
-(pos >= self->sample_frames) {
-v_state         = ENV_RELEASE;
-v_release_level = v->env_level;
-tinue;
-sl, sr;
-(self->sample_channels == 1) {
-= sr = self->sample_data[pos];
-else {
-= self->sample_data[pos * 2 + 0];
-= self->sample_data[pos * 2 + 1];
-+= sl * amp;
-+= sr * amp;
-+= 1.0;
-(v->read_pos >= v->read_end) {
-v_state         = ENV_RELEASE;
-v_release_level = v->env_level;
-= L;
-= R;
-}
+	/* Synthesise voices */
+	for (uint32_t s = 0; s < n_samples; ++s) {
+		float L = 0.f, R = 0.f;
+		for (int vi = 0; vi < MAX_VOICES; ++vi) {
+			Voice* v = &self->voices[vi];
+			if (!v->active) continue;
+			float amp = adsr_tick (self, v);
+			if (!v->active || !self->sample_data) continue;
 
-lv2_atom_forge_pop (&self->forge, &self->forge_frame);
+			uint32_t pos = (uint32_t)v->read_pos;
+			if (pos >= self->sample_frames) {
+				v->env_state         = ENV_RELEASE;
+				v->env_release_level = v->env_level;
+				continue;
+			}
+			float sl, sr;
+			if (self->sample_channels == 1) {
+				sl = sr = self->sample_data[pos];
+			} else {
+				sl = self->sample_data[pos * 2 + 0];
+				sr = self->sample_data[pos * 2 + 1];
+			}
+			L += sl * amp;
+			R += sr * amp;
+			v->read_pos += 1.0;
+			if (v->read_pos >= v->read_end) {
+				v->env_state         = ENV_RELEASE;
+				v->env_release_level = v->env_level;
+			}
+		}
+		self->out_l[s] = L;
+		self->out_r[s] = R;
+	}
 
-/* Trigger inline display redraw */
-if (self->need_expose && self->queue_draw) {
-eed_expose = false;
-ueue_draw->queue_draw (self->queue_draw->handle);
-}
+	lv2_atom_forge_pop (&self->forge, &self->forge_frame);
+
+	if (self->need_expose && self->queue_draw) {
+		self->need_expose = false;
+		self->queue_draw->queue_draw (self->queue_draw->handle);
+	}
 }
 
 static void
@@ -472,14 +489,14 @@ deactivate (LV2_Handle instance) { (void)instance; }
 static void
 cleanup (LV2_Handle instance)
 {
-ASampler* self = (ASampler*)instance;
-free (self->sample_data);
-free (self->pending_data);
-if (self->display) {
-(self->display->data);
-(self->display);
-}
-free (self);
+	ASampler* self = (ASampler*)instance;
+	free (self->sample_data);
+	free (self->pending_data);
+	if (self->display) {
+		free (self->display->data);
+		free (self->display);
+	}
+	free (self);
 }
 
 /* ------------------------------------------------------------------ */
@@ -493,48 +510,49 @@ work (LV2_Handle                  instance,
       uint32_t                    size,
       const void*                 data)
 {
-ASampler*       self = (ASampler*)instance;
-const MsgLoad*  msg  = (const MsgLoad*)data;
-(void)size;
+	ASampler*      self = (ASampler*)instance;
+	const MsgLoad* msg  = (const MsgLoad*)data;
+	(void)size;
 
-if (msg->type != MSG_LOAD_FILE) return LV2_WORKER_ERR_UNKNOWN;
+	if (msg->type != MSG_LOAD_FILE) return LV2_WORKER_ERR_UNKNOWN;
 
-SF_INFO info;
-memset (&info, 0, sizeof (info));
-SNDFILE* sf = sf_open (msg->path, SFM_READ, &info);
-if (!sf) {
-(&self->logger, "a-sampler: cannot open '%s': %s\n",
-              msg->path, sf_strerror (NULL));
- LV2_WORKER_ERR_UNKNOWN;
-}
+	SF_INFO info;
+	memset (&info, 0, sizeof (info));
+	SNDFILE* sf = sf_open (msg->path, SFM_READ, &info);
+	if (!sf) {
+		lv2_log_error (&self->logger, "a-sampler: cannot open '%s': %s\n",
+		               msg->path, sf_strerror (NULL));
+		return LV2_WORKER_ERR_UNKNOWN;
+	}
 
-uint32_t n_ch     = (uint32_t)(info.channels > 2 ? 2 : info.channels);
-uint32_t n_frames = (uint32_t)info.frames;
+	uint32_t n_ch = (uint32_t)(info.channels > 2 ? 2 : info.channels);
 
-float* raw = (float*)malloc (sizeof (float) * (uint32_t)info.channels * n_frames);
-if (!raw) { sf_close (sf); return LV2_WORKER_ERR_NO_SPACE; }
+	float* raw = (float*)malloc (sizeof (float) * (uint32_t)info.channels * (uint32_t)info.frames);
+	if (!raw) { sf_close (sf); return LV2_WORKER_ERR_NO_SPACE; }
 
-sf_count_t got = sf_readf_float (sf, raw, info.frames);
-sf_close (sf);
+	sf_count_t got = sf_readf_float (sf, raw, info.frames);
+	sf_close (sf);
 
-float* buf = (float*)malloc (sizeof (float) * n_ch * (uint32_t)got);
-if (!buf) { free (raw); return LV2_WORKER_ERR_NO_SPACE; }
+	float* buf = (float*)malloc (sizeof (float) * n_ch * (uint32_t)got);
+	if (!buf) { free (raw); return LV2_WORKER_ERR_NO_SPACE; }
 
-for (uint32_t f = 0; f < (uint32_t)got; ++f) {
-(n_ch == 1) {
-= raw[f * (uint32_t)info.channels];
-else {
-* 2 + 0] = raw[f * (uint32_t)info.channels + 0];
-* 2 + 1] = raw[f * (uint32_t)info.channels + 1];
-(raw);
+	for (uint32_t f = 0; f < (uint32_t)got; ++f) {
+		if (n_ch == 1) {
+			buf[f] = raw[f * (uint32_t)info.channels];
+		} else {
+			buf[f * 2 + 0] = raw[f * (uint32_t)info.channels + 0];
+			buf[f * 2 + 1] = raw[f * (uint32_t)info.channels + 1];
+		}
+	}
+	free (raw);
 
-MsgReady resp;
-resp.type       = MSG_FILE_READY;
-resp.data       = buf;
-resp.n_frames   = (uint32_t)got;
-resp.n_channels = n_ch;
-respond (handle, sizeof (resp), &resp);
-return LV2_WORKER_SUCCESS;
+	MsgReady resp;
+	resp.type       = MSG_FILE_READY;
+	resp.data       = buf;
+	resp.n_frames   = (uint32_t)got;
+	resp.n_channels = n_ch;
+	respond (handle, sizeof (resp), &resp);
+	return LV2_WORKER_SUCCESS;
 }
 
 static LV2_Worker_Status
@@ -542,15 +560,15 @@ work_response (LV2_Handle  instance,
                uint32_t    size,
                const void* data)
 {
-ASampler*        self = (ASampler*)instance;
-const MsgReady*  resp = (const MsgReady*)data;
-(void)size;
-if (resp->type != MSG_FILE_READY) return LV2_WORKER_ERR_UNKNOWN;
-free (self->pending_data);
-self->pending_data     = resp->data;
-self->pending_frames   = resp->n_frames;
-self->pending_channels = resp->n_channels;
-return LV2_WORKER_SUCCESS;
+	ASampler*       self = (ASampler*)instance;
+	const MsgReady* resp = (const MsgReady*)data;
+	(void)size;
+	if (resp->type != MSG_FILE_READY) return LV2_WORKER_ERR_UNKNOWN;
+	free (self->pending_data);
+	self->pending_data     = resp->data;
+	self->pending_frames   = resp->n_frames;
+	self->pending_channels = resp->n_channels;
+	return LV2_WORKER_SUCCESS;
 }
 
 /* ------------------------------------------------------------------ */
@@ -564,22 +582,23 @@ state_save (LV2_Handle                instance,
             uint32_t                  flags,
             const LV2_Feature* const* features)
 {
-ASampler* self = (ASampler*)instance;
-if (self->current_path[0] == '\0') return LV2_STATE_SUCCESS;
+	ASampler* self = (ASampler*)instance;
+	(void)flags;
+	if (self->current_path[0] == '\0') return LV2_STATE_SUCCESS;
 
-LV2_State_Map_Path* map_path = NULL;
-for (int i = 0; features[i]; ++i) {
-(!strcmp (features[i]->URI, LV2_STATE__mapPath))
-= (LV2_State_Map_Path*)features[i]->data;
-}
-if (!map_path) return LV2_STATE_ERR_NO_FEATURE;
+	LV2_State_Map_Path* map_path = NULL;
+	for (int i = 0; features[i]; ++i) {
+		if (!strcmp (features[i]->URI, LV2_STATE__mapPath))
+			map_path = (LV2_State_Map_Path*)features[i]->data;
+	}
+	if (!map_path) return LV2_STATE_ERR_NO_FEATURE;
 
-char* apath = map_path->abstract_path (map_path->handle, self->current_path);
-store (handle, self->as_sample_file,
-       apath, strlen (apath) + 1,
-       self->atom_Path, LV2_STATE_IS_POD);
-free (apath);
-return LV2_STATE_SUCCESS;
+	char* apath = map_path->abstract_path (map_path->handle, self->current_path);
+	store (handle, self->as_sample_file,
+	       apath, strlen (apath) + 1,
+	       self->atom_Path, LV2_STATE_IS_POD);
+	free (apath);
+	return LV2_STATE_SUCCESS;
 }
 
 static LV2_State_Status
@@ -589,34 +608,37 @@ state_restore (LV2_Handle                  instance,
                uint32_t                    flags,
                const LV2_Feature* const*   features)
 {
-ASampler* self = (ASampler*)instance;
+	ASampler* self = (ASampler*)instance;
+	(void)flags;
 
-LV2_State_Map_Path* map_path = NULL;
-for (int i = 0; features[i]; ++i) {
-(!strcmp (features[i]->URI, LV2_STATE__mapPath))
-= (LV2_State_Map_Path*)features[i]->data;
-}
+	LV2_State_Map_Path* map_path = NULL;
+	for (int i = 0; features[i]; ++i) {
+		if (!strcmp (features[i]->URI, LV2_STATE__mapPath))
+			map_path = (LV2_State_Map_Path*)features[i]->data;
+	}
 
-size_t   size = 0; uint32_t type = 0, fflags = 0;
-const void* val = retrieve (handle, self->as_sample_file, &size, &type, &fflags);
-if (!val || size == 0) return LV2_STATE_SUCCESS;
+	size_t   sz     = 0;
+	uint32_t type   = 0;
+	uint32_t fflags = 0;
+	const void* val = retrieve (handle, self->as_sample_file, &sz, &type, &fflags);
+	if (!val || sz == 0) return LV2_STATE_SUCCESS;
 
-const char* abstract = (const char*)val;
-char*       mapped   = NULL;
-if (map_path)
-= map_path->absolute_path (map_path->handle, abstract);
+	const char* abstract = (const char*)val;
+	char*       mapped   = NULL;
+	if (map_path)
+		mapped = map_path->absolute_path (map_path->handle, abstract);
 
-const char* path = mapped ? mapped : abstract;
-strncpy (self->current_path, path, sizeof (self->current_path) - 1);
-self->current_path[sizeof (self->current_path) - 1] = '\0';
-free (mapped);
+	const char* path = mapped ? mapped : abstract;
+	strncpy (self->current_path, path, sizeof (self->current_path) - 1);
+	self->current_path[sizeof (self->current_path) - 1] = '\0';
+	free (mapped);
 
-MsgLoad msg;
-msg.type = MSG_LOAD_FILE;
-strncpy (msg.path, self->current_path, sizeof (msg.path) - 1);
-msg.path[sizeof (msg.path) - 1] = '\0';
-self->schedule->schedule_work (self->schedule->handle, sizeof (msg), &msg);
-return LV2_STATE_SUCCESS;
+	MsgLoad msg;
+	msg.type = MSG_LOAD_FILE;
+	strncpy (msg.path, self->current_path, sizeof (msg.path) - 1);
+	msg.path[sizeof (msg.path) - 1] = '\0';
+	self->schedule->schedule_work (self->schedule->handle, sizeof (msg), &msg);
+	return LV2_STATE_SUCCESS;
 }
 
 /* ------------------------------------------------------------------ */
@@ -627,97 +649,99 @@ return LV2_STATE_SUCCESS;
 static LV2_Inline_Display_Image_Surface*
 render_inline (LV2_Handle instance, uint32_t w, uint32_t max_h)
 {
-ASampler* self = (ASampler*)instance;
+	ASampler* self = (ASampler*)instance;
 
-uint32_t h = w / 3;
-if (h < 40)    h = 40;
-if (h > max_h) h = max_h;
+	uint32_t h = w / 3;
+	if (h < 40)    h = 40;
+	if (h > max_h) h = max_h;
 
-/* (Re)allocate surface */
-if (!self->display
-    || self->display->width  != (int)w
-    || self->display->height != (int)h) {
-(self->display) { free (self->display->data); free (self->display); }
- = (LV2_Inline_Display_Image_Surface*)calloc (1, sizeof (LV2_Inline_Display_Image_Surface));
-(!self->display) return NULL;
-->data = (unsigned char*)malloc (4 * w * h);
-(!self->display->data) { free (self->display); self->display = NULL; return NULL; }
-->width  = (int)w;
-->height = (int)h;
-->stride = (int)(4 * w);
-}
+	if (!self->display
+	    || self->display->width  != (int)w
+	    || self->display->height != (int)h) {
+		if (self->display) { free (self->display->data); free (self->display); }
+		self->display = (LV2_Inline_Display_Image_Surface*)calloc (1, sizeof (LV2_Inline_Display_Image_Surface));
+		if (!self->display) return NULL;
+		self->display->data = (unsigned char*)malloc (4 * w * h);
+		if (!self->display->data) { free (self->display); self->display = NULL; return NULL; }
+		self->display->width  = (int)w;
+		self->display->height = (int)h;
+		self->display->stride = (int)(4 * w);
+	}
 
-cairo_surface_t* surface = cairo_image_surface_create_for_data (
-->data, CAIRO_FORMAT_ARGB32, (int)w, (int)h, (int)(4 * w));
-cairo_t* cr = cairo_create (surface);
+	cairo_surface_t* surface = cairo_image_surface_create_for_data (
+		self->display->data, CAIRO_FORMAT_ARGB32, (int)w, (int)h, (int)(4 * w));
+	cairo_t* cr = cairo_create (surface);
 
-/* Background */
-cairo_set_source_rgb (cr, 0.15, 0.15, 0.15);
-cairo_paint (cr);
+	/* Background */
+	cairo_set_source_rgb (cr, 0.15, 0.15, 0.15);
+	cairo_paint (cr);
 
-if (!self->sample_data || self->sample_frames == 0) {
-Placeholder */
-(cr, 0.5, 0.5, 0.5);
-t_size (cr, 11.0);
-(cr, 8, h / 2.0 + 4);
-(cr, "Drop audio file here");
-} else {
-  data  = self->sample_data;
-t32_t total = self->sample_frames;
-t32_t ch    = self->sample_channels;
-   sn    = *self->p_start;
-   en    = *self->p_end;
-(sn < 0.f) sn = 0.f;
-(en > 1.f) en = 1.f;
+	if (!self->sample_data || self->sample_frames == 0) {
+		cairo_set_source_rgb (cr, 0.5, 0.5, 0.5);
+		cairo_set_font_size (cr, 11.0);
+		cairo_move_to (cr, 8, h / 2.0 + 4);
+		cairo_show_text (cr, "Drop audio file here");
+	} else {
+		float*   data  = self->sample_data;
+		uint32_t total = self->sample_frames;
+		uint32_t ch    = self->sample_channels;
+		float    sn    = *self->p_start;
+		float    en    = *self->p_end;
+		if (sn < 0.f) sn = 0.f;
+		if (en > 1.f) en = 1.f;
 
-Shade regions outside start–end */
-(cr, 0.05, 0.05, 0.05, 0.7);
-gle (cr, 0, 0, (double)w * sn, h);
-(cr);
-gle (cr, (double)w * en, 0, (double)w * (1.f - en), h);
-(cr);
+		/* Shade regions outside start..end */
+		cairo_set_source_rgba (cr, 0.05, 0.05, 0.05, 0.7);
+		cairo_rectangle (cr, 0, 0, (double)w * sn, h);
+		cairo_fill (cr);
+		cairo_rectangle (cr, (double)w * en, 0, (double)w * (1.f - en), h);
+		cairo_fill (cr);
 
-Waveform */
-(cr, 0.2, 0.7, 0.3);
-e_width (cr, 1.0);
-mid  = h / 2.0;
-gain = mid * 0.9;
-(uint32_t x = 0; x < w; ++x) {
-t32_t i0 = (uint32_t)((double)x       / w * total);
-t32_t i1 = (uint32_t)((double)(x + 1) / w * total);
-(i1 > total) i1 = total;
-(i0 >= i1)   i1 = i0 + 1;
-(i1 > total) i1 = total;
-mn =  1.f, mx = -1.f;
-(uint32_t i = i0; i < i1; ++i) {
-s = (ch == 1) ? data[i] : 0.5f * (data[i*2] + data[i*2+1]);
-(s < mn) mn = s;
-(s > mx) mx = s;
-(cr, x + 0.5, mid - mx * gain);
-e_to (cr, x + 0.5, mid - mn * gain);
-(cr);
+		/* Waveform */
+		cairo_set_source_rgb (cr, 0.2, 0.7, 0.3);
+		cairo_set_line_width (cr, 1.0);
+		double mid  = h / 2.0;
+		double gain = mid * 0.9;
+		for (uint32_t x = 0; x < w; ++x) {
+			uint32_t i0 = (uint32_t)((double)x       / w * total);
+			uint32_t i1 = (uint32_t)((double)(x + 1) / w * total);
+			if (i1 > total) i1 = total;
+			if (i0 >= i1)   i1 = i0 + 1;
+			if (i1 > total) i1 = total;
+			float mn =  1.f, mx = -1.f;
+			for (uint32_t i = i0; i < i1; ++i) {
+				float s = (ch == 1) ? data[i] : 0.5f * (data[i*2] + data[i*2+1]);
+				if (s < mn) mn = s;
+				if (s > mx) mx = s;
+			}
+			cairo_move_to (cr, x + 0.5, mid - mx * gain);
+			cairo_line_to (cr, x + 0.5, mid - mn * gain);
+		}
+		cairo_stroke (cr);
 
-Start marker (green) */
-(cr, 0.3, 1.0, 0.3);
-e_width (cr, 1.5);
-(cr, (double)w * sn, 0); cairo_line_to (cr, (double)w * sn, h);
-(cr);
+		/* Start marker (green) */
+		cairo_set_source_rgb (cr, 0.3, 1.0, 0.3);
+		cairo_set_line_width (cr, 1.5);
+		cairo_move_to (cr, (double)w * sn, 0);
+		cairo_line_to (cr, (double)w * sn, h);
+		cairo_stroke (cr);
 
-End marker (red) */
-(cr, 1.0, 0.3, 0.3);
-(cr, (double)w * en, 0); cairo_line_to (cr, (double)w * en, h);
-(cr);
-}
+		/* End marker (red) */
+		cairo_set_source_rgb (cr, 1.0, 0.3, 0.3);
+		cairo_move_to (cr, (double)w * en, 0);
+		cairo_line_to (cr, (double)w * en, h);
+		cairo_stroke (cr);
+	}
 
-/* Border */
-cairo_set_source_rgb (cr, 0.4, 0.4, 0.4);
-cairo_set_line_width (cr, 1.0);
-cairo_rectangle (cr, 0.5, 0.5, w - 1, h - 1);
-cairo_stroke (cr);
+	/* Border */
+	cairo_set_source_rgb (cr, 0.4, 0.4, 0.4);
+	cairo_set_line_width (cr, 1.0);
+	cairo_rectangle (cr, 0.5, 0.5, w - 1, h - 1);
+	cairo_stroke (cr);
 
-cairo_destroy (cr);
-cairo_surface_destroy (surface);
-return self->display;
+	cairo_destroy (cr);
+	cairo_surface_destroy (surface);
+	return self->display;
 }
 
 /* ------------------------------------------------------------------ */
@@ -727,14 +751,14 @@ return self->display;
 static const void*
 extension_data (const char* uri)
 {
-static const LV2_State_Interface  state  = { state_save, state_restore };
-static const LV2_Worker_Interface worker = { work, work_response, NULL };
-static const LV2_Inline_Display_Interface display = { render_inline };
+	static const LV2_State_Interface  state  = { state_save, state_restore };
+	static const LV2_Worker_Interface worker = { work, work_response, NULL };
+	static const LV2_Inline_Display_Interface display = { render_inline };
 
-if (!strcmp (uri, LV2_STATE__interface))          return &state;
-if (!strcmp (uri, LV2_WORKER__interface))         return &worker;
-if (!strcmp (uri, LV2_INLINEDISPLAY__interface))  return &display;
-return NULL;
+	if (!strcmp (uri, LV2_STATE__interface))         return &state;
+	if (!strcmp (uri, LV2_WORKER__interface))        return &worker;
+	if (!strcmp (uri, LV2_INLINEDISPLAY__interface)) return &display;
+	return NULL;
 }
 
 /* ------------------------------------------------------------------ */
@@ -742,19 +766,19 @@ return NULL;
 /* ------------------------------------------------------------------ */
 
 static const LV2_Descriptor descriptor = {
-ASAMPLER_URI,
-instantiate,
-connect_port,
-activate,
-run,
-deactivate,
-cleanup,
-extension_data,
+	ASAMPLER_URI,
+	instantiate,
+	connect_port,
+	activate,
+	run,
+	deactivate,
+	cleanup,
+	extension_data,
 };
 
 LV2_SYMBOL_EXPORT
 const LV2_Descriptor*
 lv2_descriptor (uint32_t index)
 {
-return (index == 0) ? &descriptor : NULL;
+	return (index == 0) ? &descriptor : NULL;
 }
