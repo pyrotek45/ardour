@@ -530,6 +530,10 @@ private:
 	float _bottom_pane_pos;         /* last non-closed divider fraction */
 	bool  _bottom_pane_snap_pending; /* idle snap guard */
 	void  bottom_pane_allocate (Gtk::Allocation&);
+
+	/* thin clickable strip shown at the bottom edge when the panel is closed */
+	Gtk::EventBox  _bottom_grab_handle;
+	bool           bottom_grab_handle_press (GdkEventButton*);
 	typedef std::pair<TimeAxisView*,XMLNode*> TAVState;
 
 	struct VisualState {

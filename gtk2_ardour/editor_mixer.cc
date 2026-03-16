@@ -75,6 +75,7 @@ Editor::showhide_att_bottom (bool yn)
 		 * (usually 1.0 / fully closed) until the user drags it.
 		 */
 		content_bottom_pane.set_divider (0, _bottom_pane_pos);
+		_bottom_grab_handle.hide ();
 	} else {
 		/* Save the current open position so we can restore it later,
 		 * but only if the pane is not already at the fully-closed edge.
@@ -83,8 +84,19 @@ Editor::showhide_att_bottom (bool yn)
 		if (cur < 0.97f) {
 			_bottom_pane_pos = cur;
 		}
+		_bottom_grab_handle.show ();
 	}
 	Tabbable::showhide_att_bottom (yn);
+}
+
+bool
+Editor::bottom_grab_handle_press (GdkEventButton* ev)
+{
+	if (ev->button == 1) {
+		show_att_bottom (true);
+		return true;
+	}
+	return false;
 }
 
 void
