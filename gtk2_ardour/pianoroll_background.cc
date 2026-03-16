@@ -44,6 +44,31 @@ void
 PianorollMidiBackground::set_size (int w, int h)
 {
 	_width = w;
+
+	if (_height > 0 && note_range_set && h > 0) {
+		/* Height is changing while a note range is already established.
+		 * Maintain the current note_height (pixels-per-note) by expanding or
+		 * contracting the visible pitch range symmetrically around its centre.
+		 * This means dragging the panel taller reveals more notes rather than
+		 * stretching the same notes to fill the new space.
+		 */
+		int old_nh = note_height ();
+		if (old_nh > 0) {
+			int center  = (int)_lowest_note + (int)(contents_note_range() / 2);
+			int new_range = h / old_nh;
+			if (new_range < 12) { new_range = 12; }
+			int new_low  = center - new_range / 2;
+			int new_high = new_low + new_range;
+			if (new_low < 0)   { new_low = 0;         new_high = new_range; }
+			if (new_high > 127){ new_high = 127;       new_low  = std::max (0, 127 - new_range); }
+			_height = h;
+			apply_note_range ((uint8_t)new_low, (uint8_t)new_high, true,
+			                  RangeCanMove (CanMoveTop | CanMoveBottom));
+			HeightChanged (); /* EMIT SIGNAL */
+			return;
+		}
+	}
+
 	_height = h;
 
 	update_contents_height ();

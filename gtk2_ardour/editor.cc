@@ -378,6 +378,8 @@ Editor::Editor ()
 	, track_drag (nullptr)
 	, _visible_marker_types (all_marker_types)
 	, _visible_range_types (all_range_types)
+	, _bottom_pane_pos (0.75f)
+	, _bottom_pane_snap_pending (false)
 {
 	/* we are a singleton */
 
@@ -636,6 +638,10 @@ Editor::Editor ()
 	content_att_bottom.add (_bottom_hbox);
 	content_main_top.add (global_vpacker);
 	content_main.add (editor_summary_pane);
+
+	/* snap-to-close: monitor pane divider position during drags */
+	content_bottom_pane.signal_size_allocate().connect (
+		sigc::mem_fun (*this, &Editor::bottom_pane_allocate), false);
 
 	/* need to show the "contents" widget so that notebook will show if tab is switched to
 	 */
