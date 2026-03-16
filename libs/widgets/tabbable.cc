@@ -140,6 +140,11 @@ Tabbable::default_layout ()
 		content_inner_hbox.pack_start (content_bottom_pane, true, true);
 		content_bottom_pane.add (content_main_vbox);
 		content_bottom_pane.add (content_att_bottom);
+		/* Allow the divider to reach both edges: override the natural size-request
+		 * minimum for each child so the pane is not artificially constrained.
+		 * A hard floor of 1px keeps the divider handle visible and grabbable. */
+		content_bottom_pane.set_child_minsize (content_main_vbox,  1);
+		content_bottom_pane.set_child_minsize (content_att_bottom, 1);
 	} else {
 		content_inner_hbox.pack_start (content_main_vbox, true, true);
 
