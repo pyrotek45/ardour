@@ -376,15 +376,7 @@ Editor::button_selection (ArdourCanvas::Item* item, GdkEvent* event, ItemType it
 
 			if ((item_type != RegionItem && event->button.button != 2)
 			    /* for selection of control points prior to delete (shift-right click) */
-			    && !(item_type == ControlPointItem && event->button.button == 3 && event->type == GDK_BUTTON_PRESS)
-			    /* allow delete (shift-right click) to reach fade items */
-			    && !(Keyboard::is_delete_event (&event->button)
-			         && (item_type == FadeInItem || item_type == FadeInHandleItem
-			             || item_type == FadeInTrimHandleItem
-			             || item_type == FadeOutItem || item_type == FadeOutHandleItem
-			             || item_type == FadeOutTrimHandleItem
-			             || item_type == StartCrossFadeItem
-			             || item_type == EndCrossFadeItem))) {
+			    && !(item_type == ControlPointItem && event->button.button == 3 && event->type == GDK_BUTTON_PRESS)) {
 				return;
 			}
 		}
@@ -1360,7 +1352,7 @@ Editor::button_release_handler (ArdourCanvas::Item* item, GdkEvent* event, ItemT
 	if (!_drags->active () && Keyboard::is_edit_event (&event->button)) {
 		switch (item_type) {
 		case RegionItem:
-			edit_region_in_dedicated_window ();
+			edit_region (clicked_regionview);
 			break;
 		case TempoMarkerItem: {
 			ArdourMarker* marker;
@@ -1555,24 +1547,6 @@ Editor::button_release_handler (ArdourCanvas::Item* item, GdkEvent* event, ItemT
 			break;
 
 		case RegionItem:
-			if (eff == MouseObject) {
-				remove_clicked_region ();
-			}
-			break;
-
-		case FadeInItem:
-		case FadeInHandleItem:
-		case FadeInTrimHandleItem:
-		case FadeOutItem:
-		case FadeOutHandleItem:
-		case FadeOutTrimHandleItem:
-		case StartCrossFadeItem:
-			if (eff == MouseObject) {
-				remove_clicked_region ();
-			}
-			break;
-			
-		case EndCrossFadeItem:
 			if (eff == MouseObject) {
 				remove_clicked_region ();
 			}
