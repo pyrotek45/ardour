@@ -104,7 +104,7 @@ Editor::bottom_pane_allocate (Gtk::Allocation&)
 	}
 
 	float pos = content_bottom_pane.get_divider ();
-	if (pos >= 0.97f) {
+	if (pos >= 0.995f) {
 		_bottom_pane_snap_pending = true;
 		Glib::signal_idle().connect_once ([this] () {
 			show_att_bottom (false);
