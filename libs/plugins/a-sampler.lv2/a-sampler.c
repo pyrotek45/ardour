@@ -718,16 +718,17 @@ run (LV2_Handle instance, uint32_t n_samples)
 		self->need_expose = true;
 	}
 
-	/* Check Stop trigger (rising edge) */
+	/* Check Stop trigger (any edge — fires on both press and release so
+	 * the toggle feels like a momentary button regardless of latch state) */
 	float cur_stop = self->p_stop ? *self->p_stop : 0.f;
-	if (cur_stop > 0.5f && self->prev_stop <= 0.5f) {
+	if (cur_stop != self->prev_stop) {
 		stop_all (self);
 	}
 	self->prev_stop = cur_stop;
 
-	/* Check Prev Sample trigger (rising edge) */
+	/* Check Prev Sample trigger (any edge) */
 	float cur_prev = self->p_prev ? *self->p_prev : 0.f;
-	if (cur_prev > 0.5f && self->prev_prev <= 0.5f) {
+	if (cur_prev != self->prev_prev) {
 		if (self->current_path[0] != '\0') {
 			MsgBrowse msg;
 			msg.type      = MSG_BROWSE;
@@ -739,9 +740,9 @@ run (LV2_Handle instance, uint32_t n_samples)
 	}
 	self->prev_prev = cur_prev;
 
-	/* Check Next Sample trigger (rising edge) */
+	/* Check Next Sample trigger (any edge) */
 	float cur_next = self->p_next ? *self->p_next : 0.f;
-	if (cur_next > 0.5f && self->prev_next <= 0.5f) {
+	if (cur_next != self->prev_next) {
 		if (self->current_path[0] != '\0') {
 			MsgBrowse msg;
 			msg.type      = MSG_BROWSE;
