@@ -267,7 +267,6 @@ SelectionPropertiesBox::selection_changed ()
 				if (mt && mr) {
 					if (!_pianoroll) {
 						_pianoroll = new Pianoroll (X_("region editor pianoroll"), true);
-						_pianoroll->get_canvas_viewport()->set_size_request (-1, 120);
 						if (_session) {
 							_pianoroll->set_session (_session);
 						}
