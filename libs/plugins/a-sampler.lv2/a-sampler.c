@@ -110,6 +110,8 @@ typedef enum {
 	AS_PITCH_ENABLE = 19,
 	AS_ROOT_NOTE    = 20,
 	AS_LEGATO       = 21,
+	AS_HP_ENABLE    = 22,
+	AS_LP_ENABLE    = 23,
 } PortIndex;
 
 /* ------------------------------------------------------------------ */
@@ -198,6 +200,9 @@ typedef struct {
 	const float* p_pitch_enable;
 	const float* p_root_note;
 	const float* p_legato;
+	/* filter enable toggles */
+	const float* p_hp_enable;
+	const float* p_lp_enable;
 
 	/* features */
 	LV2_URID_Map*        map;
@@ -676,6 +681,8 @@ connect_port (LV2_Handle instance, uint32_t port, void* data)
 	case AS_PITCH_ENABLE: self->p_pitch_enable  = (const float*)data;             break;
 	case AS_ROOT_NOTE:    self->p_root_note     = (const float*)data;             break;
 	case AS_LEGATO:       self->p_legato        = (const float*)data;             break;
+	case AS_HP_ENABLE:    self->p_hp_enable     = (const float*)data;             break;
+	case AS_LP_ENABLE:    self->p_lp_enable     = (const float*)data;             break;
 	}
 }
 
@@ -815,34 +822,47 @@ run (LV2_Handle instance, uint32_t n_samples)
 			float amp = adsr_tick (self, v);
 			if (!v->active || !self->sample_data) continue;
 
-			/* Linear interpolation for non-integer read positions */
 			uint32_t pos0 = (uint32_t)v->read_pos;
 			if (pos0 >= self->sample_frames) {
 				v->env_state         = ENV_RELEASE;
 				v->env_release_level = v->env_level;
 				continue;
 			}
-			uint32_t pos1 = pos0 + 1;
-			if (pos1 >= self->sample_frames) pos1 = self->sample_frames - 1;
-			float frac = (float)(v->read_pos - (double)pos0);
 
-			float sl, sr, sl1, sr1;
-			if (self->sample_channels == 1) {
-				sl  = sr  = self->sample_data[pos0];
-				sl1 = sr1 = self->sample_data[pos1];
+			float sl, sr;
+			if (v->read_step == 1.0) {
+				/* Pitch-off: integer read position — direct sample lookup,
+				 * no interpolation, bit-perfect reproduction of the file. */
+				if (self->sample_channels == 1) {
+					sl = sr = self->sample_data[pos0];
+				} else {
+					sl = self->sample_data[pos0 * 2 + 0];
+					sr = self->sample_data[pos0 * 2 + 1];
+				}
 			} else {
-				sl  = self->sample_data[pos0 * 2 + 0];
-				sr  = self->sample_data[pos0 * 2 + 1];
-				sl1 = self->sample_data[pos1 * 2 + 0];
-				sr1 = self->sample_data[pos1 * 2 + 1];
+				/* Pitch-on: fractional position — linear interpolation. */
+				uint32_t pos1 = pos0 + 1;
+				if (pos1 >= self->sample_frames) pos1 = self->sample_frames - 1;
+				float frac = (float)(v->read_pos - (double)pos0);
+				float sl1, sr1;
+				if (self->sample_channels == 1) {
+					sl  = sr  = self->sample_data[pos0];
+					sl1 = sr1 = self->sample_data[pos1];
+				} else {
+					sl  = self->sample_data[pos0 * 2 + 0];
+					sr  = self->sample_data[pos0 * 2 + 1];
+					sl1 = self->sample_data[pos1 * 2 + 0];
+					sr1 = self->sample_data[pos1 * 2 + 1];
+				}
+				sl = sl + frac * (sl1 - sl);
+				sr = sr + frac * (sr1 - sr);
 			}
-			/* Linear interpolation */
-			L += (sl + frac * (sl1 - sl)) * amp;
-			R += (sr + frac * (sr1 - sr)) * amp;
+
+			L += sl * amp;
+			R += sr * amp;
 
 			v->read_pos += v->read_step;
 			if (v->read_pos >= v->read_end) {
-				/* Reached the user-defined End marker */
 				v->env_state         = ENV_RELEASE;
 				v->env_release_level = v->env_level;
 			}
@@ -855,39 +875,49 @@ run (LV2_Handle instance, uint32_t n_samples)
 	 * FX chain: gain -> HP filter -> LP filter -> distortion
 	 * ---------------------------------------------------------------- */
 
-	/* 1. Gain */
+	/* 1. Gain — skip entirely when at unity (0 dB) to keep signal untouched */
 	if (self->p_gain) {
-		float gain_lin = powf (10.f, (*self->p_gain) / 20.f);
-		for (uint32_t s = 0; s < n_samples; ++s) {
-			self->out_l[s] *= gain_lin;
-			self->out_r[s] *= gain_lin;
+		float gain_db = *self->p_gain;
+		if (gain_db != 0.f) {
+			float gain_lin = powf (10.f, gain_db / 20.f);
+			for (uint32_t s = 0; s < n_samples; ++s) {
+				self->out_l[s] *= gain_lin;
+				self->out_r[s] *= gain_lin;
+			}
 		}
 	}
 
-	/* 2. Highpass filter */
-	if (self->p_hp_freq) {
-		float hp_freq = *self->p_hp_freq;
-		/* Only apply when meaningfully above 20 Hz floor */
-		if (hp_freq > 21.f) {
+	/* 2. Highpass filter — only runs when hp_enable is on.
+	 * State is zeroed when disabled so there is no DC offset when re-enabled. */
+	if (self->p_hp_enable && *self->p_hp_enable > 0.5f) {
+		if (self->p_hp_freq) {
+			float hp_freq = *self->p_hp_freq;
 			float g = tanf ((float)M_PI * hp_freq / (float)self->sample_rate);
 			for (uint32_t s = 0; s < n_samples; ++s) {
 				self->out_l[s] = svf_hp (&self->hp_ic1eq_l, &self->hp_ic2eq_l, g, self->out_l[s]);
 				self->out_r[s] = svf_hp (&self->hp_ic1eq_r, &self->hp_ic2eq_r, g, self->out_r[s]);
 			}
 		}
+	} else {
+		/* Reset filter state so re-enabling starts clean */
+		self->hp_ic1eq_l = self->hp_ic1eq_r = 0.f;
+		self->hp_ic2eq_l = self->hp_ic2eq_r = 0.f;
 	}
 
-	/* 3. Lowpass filter */
-	if (self->p_lp_freq) {
-		float lp_freq = *self->p_lp_freq;
-		/* Only apply when meaningfully below 20 kHz ceiling */
-		if (lp_freq < 19999.f) {
+	/* 3. Lowpass filter — only runs when lp_enable is on. */
+	if (self->p_lp_enable && *self->p_lp_enable > 0.5f) {
+		if (self->p_lp_freq) {
+			float lp_freq = *self->p_lp_freq;
 			float g = tanf ((float)M_PI * lp_freq / (float)self->sample_rate);
 			for (uint32_t s = 0; s < n_samples; ++s) {
 				self->out_l[s] = svf_lp (&self->lp_ic1eq_l, &self->lp_ic2eq_l, g, self->out_l[s]);
 				self->out_r[s] = svf_lp (&self->lp_ic1eq_r, &self->lp_ic2eq_r, g, self->out_r[s]);
 			}
 		}
+	} else {
+		/* Reset filter state so re-enabling starts clean */
+		self->lp_ic1eq_l = self->lp_ic1eq_r = 0.f;
+		self->lp_ic2eq_l = self->lp_ic2eq_r = 0.f;
 	}
 
 	/* 4. Distortion */
