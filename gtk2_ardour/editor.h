@@ -295,6 +295,7 @@ public:
 	void show_editor_mixer (bool yn);
 	void create_editor_mixer ();
 	void showhide_att_left (bool);
+	void showhide_att_bottom (bool) override;
 	void set_selected_mixer_strip (TimeAxisView&);
 	void mixer_strip_width_changed ();
 	void hide_track_in_display (TimeAxisView* tv, bool apply_to_selection = false);
@@ -525,6 +526,10 @@ private:
 	Gtk::HBox                    _bottom_hbox;
 	SelectionPropertiesBox*      _properties_box;
 
+	/* bottom pane snap-to-close state */
+	float _bottom_pane_pos;         /* last non-closed divider fraction */
+	bool  _bottom_pane_snap_pending; /* idle snap guard */
+	void  bottom_pane_allocate (Gtk::Allocation&);
 	typedef std::pair<TimeAxisView*,XMLNode*> TAVState;
 
 	struct VisualState {
@@ -1961,7 +1966,7 @@ private:
 
 	void duplicate_range (bool with_dialog);
 	void duplicate_regions (float times);
-	void duplicate_points (float times, Temporal::timecnt_t const & span = Temporal::timecnt_t::zero (Temporal::AudioTime));
+	void duplicate_points (float times, Temporal::timecnt_t const & region_span);
 
 	TimeFXDialog* current_timefx;
 	static void* timefx_thread (void* arg);

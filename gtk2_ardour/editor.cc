@@ -378,6 +378,8 @@ Editor::Editor ()
 	, track_drag (nullptr)
 	, _visible_marker_types (all_marker_types)
 	, _visible_range_types (all_range_types)
+	, _bottom_pane_pos (0.75f)
+	, _bottom_pane_snap_pending (false)
 {
 	/* we are a singleton */
 
@@ -636,6 +638,10 @@ Editor::Editor ()
 	content_att_bottom.add (_bottom_hbox);
 	content_main_top.add (global_vpacker);
 	content_main.add (editor_summary_pane);
+
+	/* snap-to-close: monitor pane divider position during drags */
+	content_bottom_pane.signal_size_allocate().connect (
+		sigc::mem_fun (*this, &Editor::bottom_pane_allocate), false);
 
 	/* need to show the "contents" widget so that notebook will show if tab is switched to
 	 */
@@ -3062,7 +3068,7 @@ Editor::duplicate_range (bool with_dialog)
 
 	RegionSelection rs = get_regions_from_selection_and_entered ();
 
-	if (selection->time.length() == 0 && rs.empty() && selection->points.empty()) {
+	if (selection->time.length() == 0 && rs.empty()) {
 		return;
 	}
 
@@ -3114,24 +3120,10 @@ Editor::duplicate_range (bool with_dialog)
 	} else if (get_smart_mode()) {
 		if (!selection->time.length().is_zero()) {
 			duplicate_selection (times);
-		} else {
+		} else
 			duplicate_some_regions (rs, times);
-		}
 	} else {
 		duplicate_some_regions (rs, times);
-	}
-
-	/* Always duplicate any selected automation points, regardless of mode.
-	 * If regions are also being duplicated, pass their span so the points
-	 * shift by the same distance and land alongside the duplicated regions. */
-	if (!selection->points.empty()) {
-		Temporal::timecnt_t region_span = Temporal::timecnt_t::zero (Temporal::AudioTime);
-		if (!rs.empty()) {
-			timepos_t const start_time = rs.start_time ();
-			timepos_t const end_time   = rs.end_time ().increment ();
-			region_span = start_time.distance (end_time);
-		}
-		duplicate_points (times, region_span);
 	}
 }
 

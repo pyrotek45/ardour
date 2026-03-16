@@ -67,6 +67,53 @@ Editor::showhide_att_left (bool yn)
 }
 
 void
+Editor::showhide_att_bottom (bool yn)
+{
+	if (yn) {
+		/* Restore the pane to the last saved position before making the
+		 * widget visible.  Without this, the pane stays wherever it was
+		 * (usually 1.0 / fully closed) until the user drags it.
+		 */
+		content_bottom_pane.set_divider (0, _bottom_pane_pos);
+	} else {
+		/* Save the current open position so we can restore it later,
+		 * but only if the pane is not already at the fully-closed edge.
+		 */
+		float cur = content_bottom_pane.get_divider ();
+		if (cur < 0.97f) {
+			_bottom_pane_pos = cur;
+		}
+	}
+	Tabbable::showhide_att_bottom (yn);
+}
+
+void
+Editor::bottom_pane_allocate (Gtk::Allocation&)
+{
+	/* Called on every pane reallocate (i.e. during a drag).
+	 * When the user drags the handle all the way to the bottom edge
+	 * (divider ≥ 0.97), snap-close the panel using an idle callback so
+	 * we don't recurse back into Pane::reallocate.
+	 */
+	if (_bottom_pane_snap_pending) {
+		return;
+	}
+
+	if (!att_bottom_visible ()) {
+		return;
+	}
+
+	float pos = content_bottom_pane.get_divider ();
+	if (pos >= 0.97f) {
+		_bottom_pane_snap_pending = true;
+		Glib::signal_idle().connect_once ([this] () {
+			show_att_bottom (false);
+			_bottom_pane_snap_pending = false;
+		});
+	}
+}
+
+void
 Editor::show_editor_mixer (bool yn)
 {
 	std::shared_ptr<ARDOUR::Route> r;
