@@ -84,12 +84,17 @@ using namespace ArdourWidgets;
 using namespace Gtk;
 using namespace ARDOUR_UI_UTILS;
 
-GenericPluginUI::GenericPluginUI (std::shared_ptr<PlugInsertBase> pib, bool scrollable, bool ctrls_only)
+GenericPluginUI::GenericPluginUI (std::shared_ptr<PlugInsertBase> pib, bool scrollable, bool ctrls_only, size_t max_controls)
 	: PlugUIBase (pib)
 	, automation_menu (0)
 	, is_scrollable(scrollable)
 	, want_ctrl_only(ctrls_only)
 	, _empty (true)
+	, _build_idle_id (-1)
+	, _deferred_button_table (nullptr)
+	, _deferred_ctrl_box (nullptr)
+	, _deferred_ctrl_x (0)
+	, _deferred_button_row (0)
 	, _plugin_pianokeyboard_expander (_("MIDI Keyboard (audition only)"))
 	, _piano (0)
 	, _piano_velocity (*manage (new Adjustment (100, 1, 127, 1, 16)))
@@ -198,7 +203,13 @@ GenericPluginUI::GenericPluginUI (std::shared_ptr<PlugInsertBase> pib, bool scro
 	main_contents.pack_start (scroller, true, true);
 
 	prefheight = -1;
-	build ();
+	build (max_controls);
+
+	if (!_deferred_param_indices.empty ()) {
+		_build_idle_id = g_idle_add_full (G_PRIORITY_DEFAULT_IDLE,
+		                                   _build_remaining_idle,
+		                                   this, nullptr);
+	}
 
 	if (!ctrls_only && _pib->plugin()->has_midnam() && _pib->plugin()->knows_bank_patch()) {
 		build_midi_table ();
@@ -218,11 +229,26 @@ GenericPluginUI::GenericPluginUI (std::shared_ptr<PlugInsertBase> pib, bool scro
 
 GenericPluginUI::~GenericPluginUI ()
 {
+	if (_build_idle_id >= 0) {
+		g_source_remove (_build_idle_id);
+		_build_idle_id = -1;
+	}
 	if (output_controls.size() > 0) {
 		screen_update_connection.disconnect();
 	}
 	delete automation_menu;
 	delete _piano;
+}
+
+gboolean
+GenericPluginUI::_build_remaining_idle (gpointer data)
+{
+	GenericPluginUI* self = static_cast<GenericPluginUI*> (data);
+	bool more = self->build_remaining_batch ();
+	if (!more) {
+		self->_build_idle_id = -1;
+	}
+	return more ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
 }
 
 void
@@ -314,9 +340,10 @@ static const guint32 min_controls_per_column = 17, max_controls_per_column = 24;
 static const float default_similarity_threshold = 0.3;
 
 void
-GenericPluginUI::build ()
+GenericPluginUI::build (size_t max_controls)
 {
 	std::vector<ControlUI *> control_uis;
+	size_t n_built = 0;
 
 	// Build a ControlUI for each control port
 	for (size_t i = 0; i < plugin->parameter_count(); ++i) {
@@ -331,6 +358,12 @@ GenericPluginUI::build ()
 			}
 
 			if (plugin->describe_parameter (param) == X_("hidden")) {
+				continue;
+			}
+
+			/* If we've hit the max for this pass, defer the rest. */
+			if (max_controls > 0 && n_built >= max_controls) {
+				_deferred_param_indices.push_back (i);
 				continue;
 			}
 
@@ -357,6 +390,7 @@ GenericPluginUI::build ()
 			}
 
 			control_uis.push_back(cui);
+			++n_built;
 		}
 	}
 
@@ -423,6 +457,96 @@ GenericPluginUI::build ()
 
 	/* XXX This is a workaround for AutomationControl not knowing about preset loads */
 	plugin->PresetLoaded.connect (*this, invalidator (*this), std::bind (&GenericPluginUI::update_input_displays, this), gui_context ());
+}
+
+bool
+GenericPluginUI::build_remaining_batch ()
+{
+	/* Build the next batch of deferred parameters and append them directly
+	 * into the existing Controls box / Switches table built by the initial
+	 * automatic_layout() call.  We process up to BATCH_SIZE at a time so
+	 * each idle callback stays short.  Returns true if there is still more
+	 * to do. */
+	static const size_t BATCH_SIZE = 20;
+
+	if (_deferred_param_indices.empty ()) {
+		return false;
+	}
+
+	size_t count = 0;
+
+	while (!_deferred_param_indices.empty () && count < BATCH_SIZE) {
+		size_t i = _deferred_param_indices.front ();
+		_deferred_param_indices.erase (_deferred_param_indices.begin ());
+
+		const Evoral::Parameter param (PluginAutomation, 0, i);
+		const float value = plugin->get_parameter (i);
+
+		std::shared_ptr<ARDOUR::AutomationControl> c (
+		    std::dynamic_pointer_cast<ARDOUR::AutomationControl> (_pib->control (param)));
+
+		if (c && c->flags () & Controllable::HiddenControl) {
+			continue;
+		}
+
+		ParameterDescriptor desc;
+		plugin->get_parameter_descriptor (i, desc);
+
+		ControlUI* cui = build_control_ui (param, desc, c, value, plugin->parameter_is_input (i));
+		if (!cui) {
+			continue;
+		}
+
+		const std::string param_docs = plugin->get_parameter_docs (i);
+		if (!param_docs.empty ()) {
+			set_tooltip (cui, param_docs.c_str ());
+		}
+
+		if (cui->button || cui->file_button) {
+			/* Append to the existing Switches table, growing it if needed. */
+			if (_deferred_button_table) {
+				guint rows, cols;
+				_deferred_button_table->get_size (rows, cols);
+				if (_deferred_button_row >= (int) rows) {
+					_deferred_button_table->resize (_deferred_button_row + 1, cols);
+				}
+				_deferred_button_table->attach (*cui,
+				    0, 1,
+				    _deferred_button_row, _deferred_button_row + 1,
+				    FILL | EXPAND, FILL);
+				++_deferred_button_row;
+				_deferred_button_table->show_all ();
+				_empty = false;
+			}
+		} else if (cui->controller || cui->combo) {
+			/* Append to the existing Controls VBox. */
+			if (_deferred_ctrl_box) {
+				/* Start a new column if the current one is getting long. */
+				if (_deferred_ctrl_x > 0 && _deferred_ctrl_x >= (int) max_controls_per_column) {
+					Gtk::Frame* new_frame = manage (new Gtk::Frame);
+					new_frame->set_name ("BaseFrame");
+					new_frame->set_label (_("Controls"));
+					Gtk::VBox* new_box = manage (new Gtk::VBox);
+					new_box->set_border_width (is_scrollable && want_ctrl_only ? 1 : 5);
+					new_box->set_spacing    (is_scrollable && want_ctrl_only ? 2 : 1);
+					new_frame->add (*new_box);
+					hpacker.pack_start (*new_frame, true, true);
+					_deferred_ctrl_box = new_box;
+					_deferred_ctrl_x   = 0;
+				}
+				_deferred_ctrl_box->pack_start (*cui, false, false);
+				++_deferred_ctrl_x;
+				_deferred_ctrl_box->show_all ();
+				_empty = false;
+			}
+		}
+		/* output (meter) controls are not deferred — they were all built in build() */
+
+		++count;
+	}
+
+	hpacker.show_all ();
+	return !_deferred_param_indices.empty ();
 }
 
 
@@ -640,6 +764,7 @@ GenericPluginUI::automatic_layout (const std::vector<ControlUI*>& control_uis)
 	if (button_table->children().empty()) {
 		hpacker.remove (*bt_frame);
 		delete button_table;
+		button_table = nullptr;
 	} else {
 		button_table->show_all ();
 		_empty = false;
@@ -662,6 +787,14 @@ GenericPluginUI::automatic_layout (const std::vector<ControlUI*>& control_uis)
 		hpacker.pack_end (*pd, true, true);
 		_empty = false;
 	}
+
+	/* Save state for build_remaining_batch() so it can append into the
+	 * same tables/boxes rather than creating new frames each batch. */
+	_deferred_button_table = button_table;
+	_deferred_ctrl_box     = box;
+	_deferred_ctrl_x       = x;
+	_deferred_button_row   = button_row;
+
 	show_all();
 
 }
