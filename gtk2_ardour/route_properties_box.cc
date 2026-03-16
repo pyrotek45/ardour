@@ -18,12 +18,14 @@
  */
 
 #include <cassert>
+#include <set>
 #include <ytkmm/widget.h>
 
 #include "pbd/compose.h"
 
 #include "ardour/audio_track.h"
 #include "ardour/plugin_insert.h"
+#include "ardour/plug_insert_base.h"
 #include "ardour/port_insert.h"
 #include "ardour/route.h"
 #include "ardour/session.h"
@@ -74,6 +76,21 @@ RoutePropertiesBox::RoutePropertiesBox ()
 
 RoutePropertiesBox::~RoutePropertiesBox ()
 {
+	/* Explicitly clean up cached widgets before GTK's container destructor
+	 * runs.  Deletion order matters:
+	 *  1. Remove plugin_ui from its Frame so Frame::_w is set to 0.
+	 *  2. Remove Frame from _box so _box doesn't try to destroy it again.
+	 *  3. Delete Frame (Frame::~Frame sees _w==0, no dangling dereference).
+	 *  4. Delete plugin_ui (already unparented, safe; its destructor cancels
+	 *     any pending idle build). */
+	for (auto& entry : _ui_cache) {
+		entry.second.frame->remove ();  /* Bin::remove() — clears Frame::_w */
+		_box.remove (*entry.second.frame);
+		delete entry.second.frame;
+		delete entry.second.plugin_ui;
+	}
+	_ui_cache.clear ();
+	_proc_uis.clear ();
 }
 
 void
@@ -90,7 +107,7 @@ RoutePropertiesBox::session_going_away ()
 	SessionHandlePtr::session_going_away ();
 
 	_insert_frame.remove ();
-	drop_plugin_uis ();
+	purge_ui_cache ();
 	drop_route ();
 	delete _insert_box;
 	_insert_box = nullptr;
@@ -194,7 +211,7 @@ RoutePropertiesBox::property_changed (const PBD::PropertyChange& what_changed)
 void
 RoutePropertiesBox::drop_route ()
 {
-	drop_plugin_uis ();
+	purge_ui_cache ();
 	_route.reset ();
 	_route_connections.drop_connections ();
 	if (_idle_refill_processors_id >= 0) {
@@ -206,20 +223,45 @@ RoutePropertiesBox::drop_route ()
 void
 RoutePropertiesBox::drop_plugin_uis ()
 {
-	std::list<Gtk::Widget*> children = _box.get_children ();
-	for (auto const& child : children) {
-		child->hide ();
-		_box.remove (*child);
-		delete child;
-	}
-
+	/* Hide all currently-displayed plugin UIs.  We do NOT remove them
+	 * from _box or destroy them — cached frames stay parented to _box
+	 * permanently (just hidden) so there is no re-parenting churn and
+	 * no risk of GTK destroying them on remove(). */
 	for (auto const& ui : _proc_uis) {
 		ui->stop_updating (0);
-		delete ui;
+	}
+	_proc_uis.clear ();
+
+	/* Hide every frame that is currently visible in _box. */
+	for (auto& entry : _ui_cache) {
+		entry.second.frame->hide ();
 	}
 
 	_processor_connections.drop_connections ();
+	_insert_frame.hide ();
+}
+
+void
+RoutePropertiesBox::purge_ui_cache ()
+{
+	/* Actually destroy all cached plugin UIs — called only when the
+	 * session is going away or a processor is removed from a route.
+	 * Deletion order: remove plugin_ui from Frame first (clears Frame::_w),
+	 * then remove Frame from _box, then delete Frame, then delete plugin_ui. */
+	for (auto const& ui : _proc_uis) {
+		ui->stop_updating (0);
+	}
 	_proc_uis.clear ();
+
+	for (auto& entry : _ui_cache) {
+		entry.second.frame->remove ();  /* Bin::remove() — clears Frame::_w */
+		_box.remove (*entry.second.frame);
+		delete entry.second.frame;
+		delete entry.second.plugin_ui;
+	}
+	_ui_cache.clear ();
+
+	_processor_connections.drop_connections ();
 	_insert_frame.hide ();
 }
 
@@ -236,20 +278,46 @@ RoutePropertiesBox::add_processor_to_display (std::weak_ptr<Processor> w)
 		return;
 	}
 #endif
-	GenericPluginUI* plugin_ui = new GenericPluginUI (pib, true, true);
+
+	PlugInsertBase* key = pib.get ();
+
+	/* Check the cache first — reuse an existing UI if we have one. */
+	auto it = _ui_cache.find (key);
+	if (it != _ui_cache.end ()) {
+		GenericPluginUI*      plugin_ui = it->second.plugin_ui;
+		ArdourWidgets::Frame* frame     = it->second.frame;
+		_proc_uis.push_back (plugin_ui);
+		/* Frame is already parented to _box — just show it. */
+		frame->show ();
+		return;
+	}
+
+	/* Not cached — build the first batch of controls immediately so the
+	 * panel is usable right away, then defer the rest to idle callbacks.
+	 * This keeps the track-click response instant even for heavy plugins
+	 * like Vital that have 200+ parameters. */
+	static const size_t INITIAL_CONTROLS = 10;
+	GenericPluginUI* plugin_ui = new GenericPluginUI (pib, true, true, INITIAL_CONTROLS);
 	if (plugin_ui->empty ()) {
 		delete plugin_ui;
 		return;
 	}
-	//pib->DropReferences.connect (_processor_connections, invalidator (*this), std::bind (&RoutePropertiesBox::refill_processors, this), gui_context());
-	_proc_uis.push_back (plugin_ui);
 
 	ArdourWidgets::Frame* frame = new ArdourWidgets::Frame ();
 	frame->set_label (p->display_name ());
 	frame->add (*plugin_ui);
 	frame->set_padding (0);
+
+	/* Pack into _box and keep it there permanently (hidden when not
+	 * needed, shown when this route is selected). */
 	_box.pack_start (*frame, false, false);
 	plugin_ui->show ();
+	frame->show ();
+
+	/* GenericPluginUI self-manages any deferred idle build for remaining
+	 * parameters; no extra bookkeeping needed here. */
+	_ui_cache[key] = { plugin_ui, frame };
+	_proc_uis.push_back (plugin_ui);
 }
 
 int
@@ -273,6 +341,7 @@ RoutePropertiesBox::refill_processors ()
 	if (!_session || _session->deletion_in_progress()) {
 		return;
 	}
+	/* Hide currently-shown UIs (without destroying them). */
 	drop_plugin_uis ();
 
 	assert (_route);
@@ -280,6 +349,32 @@ RoutePropertiesBox::refill_processors ()
 	if (!_route) {
 		_idle_refill_processors_id = -1;
 		return;
+	}
+
+	/* Purge cache entries for processors that no longer belong to this
+	 * route (e.g. a plugin was removed).  Collect the set of live pib
+	 * pointers first, then erase anything not in that set. */
+	std::set<PlugInsertBase*> live;
+	_route->foreach_processor ([&](std::weak_ptr<Processor> w) {
+		std::shared_ptr<Processor> p = w.lock ();
+		if (!p) return;
+		std::shared_ptr<PlugInsertBase> pib = std::dynamic_pointer_cast<PlugInsertBase> (p);
+		if (pib) {
+			live.insert (pib.get ());
+		}
+	});
+
+	for (auto it = _ui_cache.begin (); it != _ui_cache.end (); ) {
+		if (live.find (it->first) == live.end ()) {
+			/* Processor was removed — unparent and delete. */
+			it->second.frame->remove ();  /* Bin::remove() — clears Frame::_w */
+			_box.remove (*it->second.frame);
+			delete it->second.frame;
+			delete it->second.plugin_ui;
+			it = _ui_cache.erase (it);
+		} else {
+			++it;
+		}
 	}
 
 	_route->foreach_processor (sigc::mem_fun (*this, &RoutePropertiesBox::add_processor_to_display));

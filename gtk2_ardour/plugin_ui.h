@@ -48,6 +48,8 @@
 #include <ytkmm/togglebutton.h>
 #include <ytkmm/viewport.h>
 
+namespace Gtk { class Table; }
+
 #include "ardour/types.h"
 #include "ardour/plugin.h"
 #include "ardour/variant.h"
@@ -218,7 +220,7 @@ private:
 class GenericPluginUI : public PlugUIBase, public Gtk::VBox
 {
 public:
-	GenericPluginUI (std::shared_ptr<ARDOUR::PlugInsertBase> plug, bool scrollable = false, bool ctrls_only = false);
+	GenericPluginUI (std::shared_ptr<ARDOUR::PlugInsertBase> plug, bool scrollable = false, bool ctrls_only = false, size_t max_controls = 0);
 	~GenericPluginUI ();
 
 	gint get_preferred_height () { return prefheight; }
@@ -238,6 +240,24 @@ private:
 	bool is_scrollable;
 	bool want_ctrl_only;
 	bool _empty;
+
+	/* Incremental / deferred build support.  When max_controls > 0 the
+	 * constructor only builds the first N controls; the rest are stored
+	 * here and built in small batches via a low-priority idle callback
+	 * that is entirely owned and cancelled by this object. */
+	std::vector<size_t> _deferred_param_indices;
+	int                 _build_idle_id;
+
+	/* Pointers into the widget tree built by automatic_layout() so that
+	 * build_remaining_batch() can append into the *same* frames/tables
+	 * rather than creating new ones each batch. */
+	Gtk::Table* _deferred_button_table;  /* the "Switches" table   */
+	Gtk::VBox*  _deferred_ctrl_box;      /* current "Controls" col */
+	int         _deferred_ctrl_x;        /* column fill counter    */
+	int         _deferred_button_row;    /* next free button row   */
+
+	static gboolean _build_remaining_idle (gpointer);
+	bool             build_remaining_batch (); /* returns true if more work remains */
 
 	struct MeterInfo {
 		ArdourWidgets::FastMeter* meter;
@@ -298,7 +318,7 @@ private:
 
 	void output_update();
 
-	void build ();
+	void build (size_t max_controls = 0);   /* 0 = build all */
 	void automatic_layout (const std::vector<ControlUI *>& control_uis);
 
 	ControlUI* build_control_ui (const Evoral::Parameter&                     param,

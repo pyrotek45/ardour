@@ -144,12 +144,22 @@ SelectionPropertiesBox::on_map ()
 void
 SelectionPropertiesBox::on_unmap ()
 {
-	/* This also triggers when switching pages, or hiding the GUI
-	 * perhaps consider show/hide get_visible() instead.
+	/* This also triggers when switching pages, or hiding the GUI.
+	 *
+	 * Do NOT drop the cached route here.  Nulling _route forces a full
+	 * rebuild of every GenericPluginUI (one per processor, each with
+	 * potentially hundreds of parameter widgets) the next time the panel
+	 * is shown.  For plugins with many parameters (e.g. Vital) this
+	 * causes a noticeable freeze every time the user opens the bottom
+	 * panel or clicks a track header while the panel is visible.
+	 *
+	 * The RoutePropertiesBox already guards against redundant rebuilds
+	 * via "if (r == _route && !force_update) return;" in set_route(), so
+	 * keeping the route cached here is safe.  Processors-changed signals
+	 * still trigger idle_refill_processors() when the route actually
+	 * changes its processor list.
 	 */
 	HBox::on_unmap ();
-	SelectionPropertiesBox::selection_changed ();
-	_route_prop_box->set_route (std::shared_ptr<Route>());
 }
 
 void

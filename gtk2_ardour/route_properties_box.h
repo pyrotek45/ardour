@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <map>
 #include <vector>
 
 #include <ytkmm/box.h>
@@ -31,6 +32,7 @@
 #include "widgets/frame.h"
 
 namespace ARDOUR {
+	class PlugInsertBase;
 	class Route;
 	class Processor;
 	class Session;
@@ -56,6 +58,7 @@ private:
 	void session_going_away ();
 	void drop_route ();
 	void drop_plugin_uis ();
+	void purge_ui_cache ();
 	void refill_processors ();
 	void add_processor_to_display (std::weak_ptr<ARDOUR::Processor> w);
 	void idle_refill_processors ();
@@ -67,7 +70,20 @@ private:
 	Gtk::HBox           _box;
 
 	std::shared_ptr<ARDOUR::Route> _route;
-	std::vector <GenericPluginUI*> _proc_uis;
+
+	/* Persistent cache: one GenericPluginUI + Frame per plugin insert.
+	 * We never destroy these while the session is alive — we just hide/show
+	 * them as the selected track changes.  This eliminates the 1-2 second
+	 * freeze caused by reconstructing hundreds of parameter widgets every
+	 * time the user clicks a different track header. */
+	struct CachedUI {
+		GenericPluginUI*      plugin_ui;
+		ArdourWidgets::Frame* frame;
+	};
+	std::map<ARDOUR::PlugInsertBase*, CachedUI> _ui_cache;
+
+	/* ordered list of plugin UIs currently shown for _route */
+	std::vector<GenericPluginUI*> _proc_uis;
 
 	ArdourWidgets::Frame _insert_frame;
 	ProcessorBox*        _insert_box;
