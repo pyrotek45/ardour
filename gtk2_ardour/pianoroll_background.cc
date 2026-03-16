@@ -44,16 +44,45 @@ void
 PianorollMidiBackground::set_size (int w, int h)
 {
 	_width = w;
+
+	if (_height > 0 && note_range_set && h > 0) {
+		/* Height is changing while a note range is already established.
+		 *
+		 * We want to keep each note the same pixel height (no stretching)
+		 * and keep the bottom of the visible range anchored (_lowest_note
+		 * does not move).  The top of the range grows or shrinks to fill
+		 * the new height.  This means the scroomer indicator on the
+		 * piano-key header stays fixed at the bottom while the top edge
+		 * slides up/down — exactly like every other DAW piano roll.
+		 */
+		int nh = note_height ();     /* pixels-per-note before resize   */
+		if (nh > 0) {
+			int new_range = std::max (12, h / nh);   /* at least 1 octave */
+			int new_high  = (int)_lowest_note + new_range;
+			if (new_high > 127) { new_high = 127; }
+
+			_height = h;
+
+			/* Directly update the internal state, bypassing the
+			 * fill-adjustment logic in apply_note_range() so that
+			 * _lowest_note is never touched and nh stays constant.
+			 */
+			_highest_note = (uint8_t) new_high;
+			note_range_adjustment.set_page_size (_highest_note - _lowest_note);
+			note_range_adjustment.set_value     (_lowest_note);
+
+			ViewBackground::update_contents_height ();
+			setup_note_lines ();
+			apply_note_range_to_children ();
+
+			NoteRangeChanged (); /* EMIT SIGNAL */
+			HeightChanged ();    /* EMIT SIGNAL */
+			return;
+		}
+	}
+
 	_height = h;
-
-	/* Simply update the layout height and redraw note lines.  The visible
-	 * note range (lowest/highest note) stays fixed so that the scroomer
-	 * indicator on the piano-key header does not jump around while the
-	 * user resizes the panel.  Notes will scale in pixel height with the
-	 * panel, which is the standard behaviour for all DAW piano rolls.
-	 */
 	update_contents_height ();
-
 	HeightChanged (); /* EMIT SIGNAL */
 }
 
