@@ -643,6 +643,24 @@ Editor::Editor ()
 	content_bottom_pane.signal_size_allocate().connect (
 		sigc::mem_fun (*this, &Editor::bottom_pane_allocate), false);
 
+	/* Grab handle: a thin clickable strip shown at the very bottom of the
+	 * editor canvas when the bottom panel is closed.  Clicking it reopens
+	 * the panel.  It is hidden whenever the panel is visible (the pane
+	 * divider serves as the grab handle in that case).
+	 */
+	_bottom_grab_handle.set_size_request (-1, 6);
+	_bottom_grab_handle.set_name ("Divider");
+	_bottom_grab_handle.set_tooltip_text (_("Click to open Piano Roll panel  (Shift+P)"));
+	_bottom_grab_handle.set_events (Gdk::BUTTON_PRESS_MASK | Gdk::ENTER_NOTIFY_MASK);
+	_bottom_grab_handle.signal_button_press_event().connect (
+		sigc::mem_fun (*this, &Editor::bottom_grab_handle_press), false);
+	_bottom_grab_handle.signal_realize().connect ([this] () {
+		_bottom_grab_handle.get_window()->set_cursor (*_cursors->expand_up_down);
+	});
+	content_main_vbox.pack_end (_bottom_grab_handle, false, false);
+	/* hidden by default — only shown when panel is closed */
+	_bottom_grab_handle.set_no_show_all (true);
+
 	/* need to show the "contents" widget so that notebook will show if tab is switched to
 	 */
 
