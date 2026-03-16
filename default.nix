@@ -22,8 +22,8 @@ stdenv.mkDerivation rec {
 
   src = pkgs.fetchgit {
     url    = "https://github.com/pyrotek45/ardour";
-    rev    = "2d403a91d5004459283d93ea4326b67944a91293";
-    hash   = "sha256-Ve5IjAqgxQ3YJmGkiddebU32oCTTvSz83dZeywcveDA=";
+    rev    = "2b435745cbf85b5d08e70271588ef6ab79ab736c";
+    hash   = "sha256-HNNoAPW49WBGQweUtZZLoH2Pxn8cbPScWwQnIHF4DV8=";
   };
 
   patches = [
