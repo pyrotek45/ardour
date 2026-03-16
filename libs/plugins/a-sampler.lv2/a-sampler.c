@@ -102,11 +102,14 @@ typedef enum {
 	AS_STOP        = 11,
 	AS_PREV_SAMPLE = 12,
 	AS_NEXT_SAMPLE = 13,
-	AS_GAIN        = 14,
-	AS_HP_FREQ     = 15,
-	AS_LP_FREQ     = 16,
-	AS_DIST_DRIVE  = 17,
-	AS_DIST_TYPE   = 18,
+	AS_GAIN         = 14,
+	AS_HP_FREQ      = 15,
+	AS_LP_FREQ      = 16,
+	AS_DIST_DRIVE   = 17,
+	AS_DIST_TYPE    = 18,
+	AS_PITCH_ENABLE = 19,
+	AS_ROOT_NOTE    = 20,
+	AS_LEGATO       = 21,
 } PortIndex;
 
 /* ------------------------------------------------------------------ */
@@ -130,7 +133,9 @@ typedef struct {
 	int      active;
 	double   read_pos;
 	double   read_end;
+	double   read_step;  /* playback speed ratio (1.0 = normal, 2.0 = +1 oct) */
 	float    velocity;
+	int      midi_note;  /* the MIDI note number that triggered this voice */
 	EnvState env_state;
 	double   env_level;
 	double   env_release_level;
@@ -189,6 +194,10 @@ typedef struct {
 	const float* p_lp_freq;
 	const float* p_dist_drive;
 	const float* p_dist_type;
+	/* pitch ports */
+	const float* p_pitch_enable;
+	const float* p_root_note;
+	const float* p_legato;
 
 	/* features */
 	LV2_URID_Map*        map;
@@ -405,11 +414,50 @@ oneshot_kill_all (ASampler* self)
 }
 
 static void
-note_on (ASampler* self, int vel)
+note_on (ASampler* self, int midi_note, int vel)
 {
 	if (!self->sample_data || self->sample_frames == 0) return;
 
-	int gate = (*self->p_gate > 0.5f) ? 1 : 0;
+	int gate         = (self->p_gate         && *self->p_gate         > 0.5f) ? 1 : 0;
+	int pitch_on     = (self->p_pitch_enable && *self->p_pitch_enable > 0.5f) ? 1 : 0;
+	int legato_on    = (self->p_legato       && *self->p_legato       > 0.5f) ? 1 : 0;
+	int root_note    = self->p_root_note ? (int)(*self->p_root_note + 0.5f) : 60;
+
+	/* Compute playback speed ratio.
+	 * pitch_on = 0  → always 1.0 (original speed, same pitch for every note)
+	 * pitch_on = 1  → 2^((midi_note - root_note) / 12) semitone ratio           */
+	double read_step = 1.0;
+	if (pitch_on) {
+		read_step = pow (2.0, (midi_note - root_note) / 12.0);
+	}
+
+	float s = self->p_start ? *self->p_start : 0.f;
+	float e = self->p_end   ? *self->p_end   : 1.f;
+	if (s < 0.f) s = 0.f;
+	if (e > 1.f) e = 1.f;
+	if (s > e) { float t = s; s = e; e = t; }
+	if (e - s < 1e-4f) e = s + 1e-4f;
+	if (e > 1.f) e = 1.f;
+
+	double start_frame = s * (double)(self->sample_frames - 1);
+	double end_frame   = e * (double)(self->sample_frames - 1);
+	if (end_frame <= start_frame) end_frame = start_frame + 1;
+
+	/* Legato: if a voice is already playing (in gate mode), just update its
+	 * pitch and don't restart the envelope or position. */
+	if (legato_on && gate) {
+		for (int i = 0; i < MAX_VOICES; ++i) {
+			Voice* v = &self->voices[i];
+			if (v->active && v->env_state != ENV_RELEASE
+			              && v->env_state != ENV_FASTOFF
+			              && v->env_state != ENV_IDLE) {
+				v->midi_note = midi_note;
+				v->read_step = read_step;
+				v->read_end  = end_frame;
+				return;  /* legato: don't spawn a new voice */
+			}
+		}
+	}
 
 	if (!gate) {
 		/* one-shot mode: stop any previous voice immediately */
@@ -418,22 +466,14 @@ note_on (ASampler* self, int vel)
 
 	Voice* v       = find_free_voice (self);
 	v->active      = 1;
+	v->midi_note   = midi_note;
 	v->velocity    = vel / 127.0f;
 	v->env_state   = ENV_ATTACK;
 	v->env_level   = 0.0;
 	v->oneshot     = gate ? 0 : 1;
-
-	float s = *self->p_start;
-	float e = *self->p_end;
-	if (s < 0.f) s = 0.f;
-	if (e > 1.f) e = 1.f;
-	if (s > e) { float t = s; s = e; e = t; }
-	if (e - s < 1e-4f) e = s + 1e-4f;
-	if (e > 1.f) e = 1.f;
-
-	v->read_pos = s * (double)(self->sample_frames - 1);
-	v->read_end = e * (double)(self->sample_frames - 1);
-	if (v->read_end <= v->read_pos) v->read_end = v->read_pos + 1;
+	v->read_step   = read_step;
+	v->read_pos    = start_frame;
+	v->read_end    = end_frame;
 }
 
 /* Gate note-off: only trigger release if gate mode is on */
@@ -628,11 +668,14 @@ connect_port (LV2_Handle instance, uint32_t port, void* data)
 	case AS_STOP:        self->p_stop       = (const float*)data;             break;
 	case AS_PREV_SAMPLE: self->p_prev       = (const float*)data;             break;
 	case AS_NEXT_SAMPLE: self->p_next       = (const float*)data;             break;
-	case AS_GAIN:        self->p_gain       = (const float*)data;             break;
-	case AS_HP_FREQ:     self->p_hp_freq    = (const float*)data;             break;
-	case AS_LP_FREQ:     self->p_lp_freq    = (const float*)data;             break;
-	case AS_DIST_DRIVE:  self->p_dist_drive = (const float*)data;             break;
-	case AS_DIST_TYPE:   self->p_dist_type  = (const float*)data;             break;
+	case AS_GAIN:         self->p_gain         = (const float*)data;             break;
+	case AS_HP_FREQ:      self->p_hp_freq       = (const float*)data;             break;
+	case AS_LP_FREQ:      self->p_lp_freq       = (const float*)data;             break;
+	case AS_DIST_DRIVE:   self->p_dist_drive    = (const float*)data;             break;
+	case AS_DIST_TYPE:    self->p_dist_type     = (const float*)data;             break;
+	case AS_PITCH_ENABLE: self->p_pitch_enable  = (const float*)data;             break;
+	case AS_ROOT_NOTE:    self->p_root_note     = (const float*)data;             break;
+	case AS_LEGATO:       self->p_legato        = (const float*)data;             break;
 	}
 }
 
@@ -750,7 +793,7 @@ run (LV2_Handle instance, uint32_t n_samples)
 			const uint8_t* midi = (const uint8_t*)(ev + 1);
 			uint8_t        type = midi[0] & 0xf0;
 			if (type == 0x90 && midi[2] > 0) {
-				note_on (self, midi[2]);
+				note_on (self, (int)midi[1], (int)midi[2]);
 			} else if (type == 0x80 || (type == 0x90 && midi[2] == 0)) {
 				note_off_gate (self);
 			} else if (type == 0xb0) {
@@ -771,22 +814,32 @@ run (LV2_Handle instance, uint32_t n_samples)
 			float amp = adsr_tick (self, v);
 			if (!v->active || !self->sample_data) continue;
 
-			uint32_t pos = (uint32_t)v->read_pos;
-			if (pos >= self->sample_frames) {
+			/* Linear interpolation for non-integer read positions */
+			uint32_t pos0 = (uint32_t)v->read_pos;
+			if (pos0 >= self->sample_frames) {
 				v->env_state         = ENV_RELEASE;
 				v->env_release_level = v->env_level;
 				continue;
 			}
-			float sl, sr;
+			uint32_t pos1 = pos0 + 1;
+			if (pos1 >= self->sample_frames) pos1 = self->sample_frames - 1;
+			float frac = (float)(v->read_pos - (double)pos0);
+
+			float sl, sr, sl1, sr1;
 			if (self->sample_channels == 1) {
-				sl = sr = self->sample_data[pos];
+				sl  = sr  = self->sample_data[pos0];
+				sl1 = sr1 = self->sample_data[pos1];
 			} else {
-				sl = self->sample_data[pos * 2 + 0];
-				sr = self->sample_data[pos * 2 + 1];
+				sl  = self->sample_data[pos0 * 2 + 0];
+				sr  = self->sample_data[pos0 * 2 + 1];
+				sl1 = self->sample_data[pos1 * 2 + 0];
+				sr1 = self->sample_data[pos1 * 2 + 1];
 			}
-			L += sl * amp;
-			R += sr * amp;
-			v->read_pos += 1.0;
+			/* Linear interpolation */
+			L += (sl + frac * (sl1 - sl)) * amp;
+			R += (sr + frac * (sr1 - sr)) * amp;
+
+			v->read_pos += v->read_step;
 			if (v->read_pos >= v->read_end) {
 				/* Reached the user-defined End marker */
 				v->env_state         = ENV_RELEASE;
