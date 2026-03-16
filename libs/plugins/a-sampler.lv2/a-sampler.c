@@ -168,6 +168,7 @@ typedef struct {
 	float*   data;
 	uint32_t n_frames;
 	uint32_t n_channels;
+	uint32_t file_samplerate; /* sample rate the file was recorded at */
 	char     new_path[4096]; /* the file that was actually loaded */
 } MsgReady;
 
@@ -230,9 +231,11 @@ typedef struct {
 	float*   sample_data;
 	uint32_t sample_frames;
 	uint32_t sample_channels;
+	uint32_t sample_samplerate; /* sample rate of the loaded file */
 	float*   pending_data;
 	uint32_t pending_frames;
 	uint32_t pending_channels;
+	uint32_t pending_samplerate;
 	char     pending_path[4096]; /* path of the pending sample */
 
 	/* voices */
@@ -428,12 +431,21 @@ note_on (ASampler* self, int midi_note, int vel)
 	int legato_on    = (self->p_legato       && *self->p_legato       > 0.5f) ? 1 : 0;
 	int root_note    = self->p_root_note ? (int)(*self->p_root_note + 0.5f) : 60;
 
+	/* Sample-rate correction: if the file was recorded at a different rate
+	 * than the host, we must advance read_pos faster or slower accordingly.
+	 * E.g. file at 44100, host at 48000 → step = 44100/48000 ≈ 0.9188 (slower,
+	 * correct pitch).  When rates match the ratio is exactly 1.0.            */
+	double sr_ratio = 1.0;
+	if (self->sample_samplerate > 0 && self->sample_samplerate != (uint32_t)self->sample_rate) {
+		sr_ratio = (double)self->sample_samplerate / self->sample_rate;
+	}
+
 	/* Compute playback speed ratio.
-	 * pitch_on = 0  → always 1.0 (original speed, same pitch for every note)
-	 * pitch_on = 1  → 2^((midi_note - root_note) / 12) semitone ratio           */
-	double read_step = 1.0;
+	 * pitch_on = 0  → sr_ratio only (correct pitch, any file SR)
+	 * pitch_on = 1  → pitch shift × sr_ratio                                */
+	double read_step = sr_ratio;
 	if (pitch_on) {
-		read_step = pow (2.0, (midi_note - root_note) / 12.0);
+		read_step = sr_ratio * pow (2.0, (midi_note - root_note) / 12.0);
 	}
 
 	float s = self->p_start ? *self->p_start : 0.f;
@@ -710,10 +722,11 @@ run (LV2_Handle instance, uint32_t n_samples)
 	/* Swap in freshly-loaded sample buffer from worker */
 	if (self->pending_data) {
 		free (self->sample_data);
-		self->sample_data     = self->pending_data;
-		self->sample_frames   = self->pending_frames;
-		self->sample_channels = self->pending_channels;
-		self->pending_data    = NULL;
+		self->sample_data       = self->pending_data;
+		self->sample_frames     = self->pending_frames;
+		self->sample_channels   = self->pending_channels;
+		self->sample_samplerate = self->pending_samplerate;
+		self->pending_data      = NULL;
 		/* Update current path if a browse result set a new path */
 		if (self->pending_path[0] != '\0') {
 			strncpy (self->current_path, self->pending_path, sizeof (self->current_path) - 1);
@@ -831,8 +844,7 @@ run (LV2_Handle instance, uint32_t n_samples)
 
 			float sl, sr;
 			if (v->read_step == 1.0) {
-				/* Pitch-off: integer read position — direct sample lookup,
-				 * no interpolation, bit-perfect reproduction of the file. */
+				/* Exact 1:1 — integer position, direct lookup, bit-perfect. */
 				if (self->sample_channels == 1) {
 					sl = sr = self->sample_data[pos0];
 				} else {
@@ -840,7 +852,7 @@ run (LV2_Handle instance, uint32_t n_samples)
 					sr = self->sample_data[pos0 * 2 + 1];
 				}
 			} else {
-				/* Pitch-on: fractional position — linear interpolation. */
+				/* Fractional position (pitch shift or SR correction) — linear interp. */
 				uint32_t pos1 = pos0 + 1;
 				if (pos1 >= self->sample_frames) pos1 = self->sample_frames - 1;
 				float frac = (float)(v->read_pos - (double)pos0);
@@ -1018,9 +1030,10 @@ load_audio_file (const char* path, MsgReady* resp)
 	}
 	free (raw);
 
-	resp->data       = buf;
-	resp->n_frames   = (uint32_t)got;
-	resp->n_channels = n_ch;
+	resp->data            = buf;
+	resp->n_frames        = (uint32_t)got;
+	resp->n_channels      = n_ch;
+	resp->file_samplerate = (uint32_t)info.samplerate;
 	return 0;
 }
 
@@ -1155,9 +1168,10 @@ work_response (LV2_Handle  instance,
 	(void)size;
 	if (resp->type != MSG_FILE_READY) return LV2_WORKER_ERR_UNKNOWN;
 	free (self->pending_data);
-	self->pending_data     = resp->data;
-	self->pending_frames   = resp->n_frames;
-	self->pending_channels = resp->n_channels;
+	self->pending_data       = resp->data;
+	self->pending_frames     = resp->n_frames;
+	self->pending_channels   = resp->n_channels;
+	self->pending_samplerate = resp->file_samplerate;
 	/* Store the new path so run() can update current_path */
 	strncpy (self->pending_path, resp->new_path, sizeof (self->pending_path) - 1);
 	self->pending_path[sizeof (self->pending_path) - 1] = '\0';
