@@ -48,26 +48,45 @@ PianorollMidiBackground::set_size (int w, int h)
 	if (_height > 0 && note_range_set && h > 0) {
 		/* Height is changing while a note range is already established.
 		 *
-		 * We want to keep each note the same pixel height (no stretching)
-		 * and keep the bottom of the visible range anchored (_lowest_note
-		 * does not move).  The top of the range grows or shrinks to fill
-		 * the new height.  This means the scroomer indicator on the
-		 * piano-key header stays fixed at the bottom while the top edge
-		 * slides up/down — exactly like every other DAW piano roll.
+		 * Keep each note the same pixel height (no stretching).
+		 * Anchor the *centre* of the visible range so the scroomer stays
+		 * roughly centred and doesn't jump.  The visible window simply
+		 * expands or contracts symmetrically around the current centre
+		 * note as the panel is resized.
 		 */
-		int nh = note_height ();     /* pixels-per-note before resize   */
+		int nh = note_height ();     /* pixels-per-note before resize */
 		if (nh > 0) {
-			int new_range = std::max (12, h / nh);   /* at least 1 octave */
-			int new_high  = (int)_lowest_note + new_range;
-			if (new_high > 127) { new_high = 127; }
+			/* centre of the currently-visible note range */
+			int old_range  = _highest_note - _lowest_note;
+			int center_note = _lowest_note + old_range / 2;
 
-			_height = h;
+			int new_range = std::max (12, h / nh);   /* notes that fit at new height */
+			int half      = new_range / 2;
 
-			/* Directly update the internal state, bypassing the
-			 * fill-adjustment logic in apply_note_range() so that
-			 * _lowest_note is never touched and nh stays constant.
+			int new_low  = center_note - half;
+			int new_high = new_low + new_range;
+
+			/* clamp to [0, 127] */
+			if (new_low < 0) {
+				new_low  = 0;
+				new_high = std::min (127, new_range);
+			}
+			if (new_high > 127) {
+				new_high = 127;
+				new_low  = std::max (0, 127 - new_range);
+			}
+
+			_height        = h;
+			_lowest_note   = (uint8_t) new_low;
+			_highest_note  = (uint8_t) new_high;
+
+			/* Set the adjustment values.  Because _lowest_note and
+			 * _highest_note have already been updated above, the
+			 * note_range_adjustment_changed() callback will hit its
+			 * early-return guard ("lowest == _lowest_note && highest ==
+			 * _highest_note") and will NOT call apply_note_range() —
+			 * so our values are preserved.
 			 */
-			_highest_note = (uint8_t) new_high;
 			note_range_adjustment.set_page_size (_highest_note - _lowest_note);
 			note_range_adjustment.set_value     (_lowest_note);
 
