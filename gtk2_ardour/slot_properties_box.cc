@@ -76,7 +76,7 @@ SlotPropertiesBox::SlotPropertiesBox ()
 	_triggerwidget = manage (new SlotPropertyWidget ());
 	_triggerwidget->show();
 
-	pack_start (*_triggerwidget, true, true);
+	pack_start (*_triggerwidget, false, false);
 }
 
 SlotPropertiesBox::~SlotPropertiesBox ()
@@ -371,9 +371,9 @@ SlotPropertyTable::SlotPropertyTable ()
 	eLaunchBox->show_all();
 	eFollowBox->show_all();
 
-	attach(*trigBox,        0,1, 0,1, Gtk::FILL, Gtk::SHRINK | Gtk::FILL);
-	attach(*eLaunchBox,     0,1, 1,2, Gtk::FILL, Gtk::SHRINK | Gtk::FILL);
-	attach(*eFollowBox,     0,1, 2,3, Gtk::FILL, Gtk::SHRINK | Gtk::FILL);
+	attach(*trigBox,        0,1, 0,1, Gtk::FILL, Gtk::SHRINK);
+	attach(*eLaunchBox,     0,1, 1,2, Gtk::FILL, Gtk::SHRINK);
+	attach(*eFollowBox,     0,1, 2,3, Gtk::FILL, Gtk::SHRINK);
 
 	set_tooltip(_name_frame, _("Double-click to rename this clip"));
 	set_tooltip(_gain_spinner, _("Adjust audio gain (or MIDI velocity) for this slot"));
@@ -725,6 +725,6 @@ SlotPropertyTable::on_trigger_changed (PropertyChange const& pc)
 SlotPropertyWidget::SlotPropertyWidget ()
 {
 	ui = new SlotPropertyTable ();
-	pack_start(*ui);
+	pack_start(*ui, false, false);
 	ui->show();
 }
