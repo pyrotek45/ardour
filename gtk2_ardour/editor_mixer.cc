@@ -75,7 +75,6 @@ Editor::showhide_att_bottom (bool yn)
 		 * (usually 1.0 / fully closed) until the user drags it.
 		 */
 		content_bottom_pane.set_divider (0, _bottom_pane_pos);
-		_bottom_grab_handle.hide ();
 	} else {
 		/* Save the current open position so we can restore it later,
 		 * but only if the pane is not already at the fully-closed edge.
@@ -84,19 +83,8 @@ Editor::showhide_att_bottom (bool yn)
 		if (cur < 0.97f) {
 			_bottom_pane_pos = cur;
 		}
-		_bottom_grab_handle.show ();
 	}
 	Tabbable::showhide_att_bottom (yn);
-}
-
-bool
-Editor::bottom_grab_handle_press (GdkEventButton* ev)
-{
-	if (ev->button == 1) {
-		show_att_bottom (true);
-		return true;
-	}
-	return false;
 }
 
 void
@@ -104,8 +92,10 @@ Editor::bottom_pane_allocate (Gtk::Allocation&)
 {
 	/* Called on every pane reallocate (i.e. during a drag).
 	 * When the user drags the handle all the way to the bottom edge
-	 * (divider ≥ 0.97), snap-close the panel using an idle callback so
-	 * we don't recurse back into Pane::reallocate.
+	 * (divider ≥ 0.995), snap it to 0.999 so the panel is collapsed but
+	 * the divider remains visible and grabbable.
+	 * 
+	 * To fully hide/show the panel, use the toggle button or Alt+P shortcut.
 	 */
 	if (_bottom_pane_snap_pending) {
 		return;
@@ -119,10 +109,43 @@ Editor::bottom_pane_allocate (Gtk::Allocation&)
 	if (pos >= 0.995f) {
 		_bottom_pane_snap_pending = true;
 		Glib::signal_idle().connect_once ([this] () {
-			show_att_bottom (false);
+			/* Snap to near-closed position but keep the divider grabbable */
+			content_bottom_pane.set_divider (0, 0.999f);
 			_bottom_pane_snap_pending = false;
 		});
 	}
+}
+
+bool
+Editor::bottom_pane_button_press (GdkEventButton* ev)
+{
+	/* Track the divider position when button is pressed so we can detect
+	 * a click (no drag) on a collapsed divider in button_release
+	 */
+	_bottom_pane_press_position = content_bottom_pane.get_divider ();
+	return false;
+}
+
+bool
+Editor::bottom_pane_button_release (GdkEventButton* ev)
+{
+	/* If the divider is still at the collapsed position (0.999) and hasn't
+	 * moved since button press, treat it as a click and reopen to default.
+	 */
+	if (!att_bottom_visible ()) {
+		return false;
+	}
+
+	float current_pos = content_bottom_pane.get_divider ();
+	
+	/* Check if we're collapsed and the divider hasn't moved (click, not drag) */
+	if (current_pos >= 0.99f && fabs(current_pos - _bottom_pane_press_position) < 0.01f) {
+		/* Reopen to a sensible default (70% editor, 30% bottom panel) */
+		content_bottom_pane.set_divider (0, 0.7f);
+		return true;
+	}
+	
+	return false;
 }
 
 void
